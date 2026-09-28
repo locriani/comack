@@ -63,12 +63,13 @@ def find_trigger(text: str) -> Optional[str]:
 
 
 class TriggerListener:
-    """Transcribes the last few seconds of live audio every couple of seconds, only to spot
-    trigger phrases. The window's text is checked and dropped at once; nothing is kept."""
+    """Transcribes the last 12 seconds of live audio every 10 seconds (the overlap catches a phrase
+    straddling two checks), only to spot trigger phrases. The window's text is checked and dropped
+    at once; nothing is kept."""
 
     def __init__(self, transcribe: Callable[[bytes], str], on_trigger: Callable[[str], None],
-                 sample_rate: int = 16000, window_s: float = 4.0, every_s: float = 2.0,
-                 cooldown_s: float = 10.0):
+                 sample_rate: int = 16000, window_s: float = 12.0, every_s: float = 10.0,
+                 cooldown_s: float = 15.0):
         self._transcribe = transcribe
         self._on_trigger = on_trigger
         self._window = bytearray()

@@ -54,7 +54,7 @@ class Settings(BaseModel):
 
     # Buffered speech is transcribed, scrambled and mined this often (trigger phrases are
     # checked continuously on a rolling few-second window instead)
-    PROCESS_INTERVAL_MINUTES: float = float(os.getenv("PROCESS_INTERVAL_MINUTES", "5"))
+    PROCESS_INTERVAL_MINUTES: float = float(os.getenv("PROCESS_INTERVAL_MINUTES", "2"))
 
     # Stochastic Part-of-Speech "Differential Privacy" word scramble rate
     POS_SCRAMBLE_RATE: float = float(os.getenv("POS_SCRAMBLE_RATE", "0.10"))
