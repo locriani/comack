@@ -56,6 +56,13 @@ def pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
     return buf.getvalue()
 
 
+def reliable(segment) -> bool:
+    """False for a Whisper segment that is low-confidence or looks hallucinated."""
+    return (segment.avg_logprob >= settings.WHISPER_MIN_AVG_LOGPROB
+            and segment.compression_ratio <= settings.WHISPER_MAX_COMPRESSION
+            and segment.no_speech_prob <= settings.WHISPER_MAX_NO_SPEECH)
+
+
 def find_trigger(text: str) -> Optional[str]:
     """Whisper punctuates freely ("Alpha-Protocol."), so compare on lowercase words only."""
     words = " " + " ".join(re.findall(r"[a-z0-9']+", text.lower())) + " "
@@ -146,11 +153,15 @@ class Transcriber:
             try:
                 wav_io = io.BytesIO(pcm_to_wav_bytes(pcm_bytes))
                 segments, _ = model.transcribe(wav_io, beam_size=2, language="en")
-                text_parts = [s.text.strip() for s in segments]
-                return " ".join(text_parts)
+                segments = list(segments)
+                kept = [s.text.strip() for s in segments if reliable(s)]
+                if len(kept) < len(segments):
+                    logger.info(f"Skipped {len(segments) - len(kept)} of {len(segments)} unreliable segments.")
+                return " ".join(kept)
             except Exception as e:
                 logger.error(f"Error in faster-whisper transcription: {e}")
-                
+                return ""  # a failed transcription is skipped, never replaced
+
         # High quality conversational mock fallback for testing without GPU/faster-whisper
         return self._generate_fallback_speech(len(pcm_bytes) / 32000.0)
 

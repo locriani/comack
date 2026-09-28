@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from server.audio.vad import AudioVAD, SpeechSegment
 from server.audio.transcriber import Transcriber, TriggerListener, find_trigger
@@ -56,6 +57,27 @@ class TestSecretTrigger(unittest.TestCase):
         text, start, dur = t.transcribe_batch(pcm, start)
         self.assertNotIn("555-1234", text)
         self.assertAlmostEqual(dur, 0.2)
+
+    def test_unreliable_segments_are_skipped(self):
+        def seg(text, logprob=-0.3, ratio=1.5, no_speech=0.1):
+            return SimpleNamespace(text=f" {text}", avg_logprob=logprob, compression_ratio=ratio,
+                                   no_speech_prob=no_speech)
+
+        class Model:
+            def transcribe(self, *a, **k):
+                return iter([seg("Pass the mug."), seg("mumble", logprob=-1.4),
+                             seg("thanks thanks thanks", ratio=3.1),
+                             seg("Thank you for watching.", no_speech=0.9), seg("Sure.")]), None
+
+        with patch("server.audio.transcriber._get_whisper_model", return_value=Model()):
+            self.assertEqual(Transcriber()._transcribe(CHUNK), "Pass the mug. Sure.")
+
+        class Broken:
+            def transcribe(self, *a, **k):
+                raise RuntimeError("cuda died")
+
+        with patch("server.audio.transcriber._get_whisper_model", return_value=Broken()):
+            self.assertEqual(Transcriber()._transcribe(CHUNK), "")   # skipped, not mock speech
 
     def test_continuous_sound_still_yields_segments(self):
         segments = []
