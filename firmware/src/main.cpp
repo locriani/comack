@@ -11,6 +11,7 @@
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 
 #include "config.h"
 #include "secrets.h"
@@ -299,20 +300,57 @@ extern "C" void app_main(void) {
     microlink_ip_to_str(comack-server_ip, resolved_ip_str);
     ESP_LOGI(TAG, "MagicDNS resolved '%s' -> %s", COMACK_SERVER_HOST, resolved_ip_str);
 
+    gpio_config_t btn = {};
+    btn.pin_bit_mask = (1ULL << PIN_BTN_FWD) | (1ULL << PIN_BTN_BACK);
+    btn.mode = GPIO_MODE_INPUT;
+    btn.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&btn);
+
     // Poll for a newly revealed comic; the server only bumps "current" after the silence gate opens.
     // ponytail: 10s polling, not a /ws/events subscription. Add the socket if latency matters.
-    int shown_issue = -1;
+    // Buttons browse older issues; after BROWSE_TIMEOUT_MS idle we snap back to the latest.
+    int latest = -1, shown = -1;
+    int64_t next_poll_us = 0, browse_until_us = 0;
+    bool fwd_was = false, back_was = false;
     while (true) {
-        uint8_t buf[256];
-        int n = http_get(comack-server_ip, "/api/comics/current", buf, sizeof(buf) - 1);
-        if (n > 0) {
-            buf[n] = 0;
-            const char *p = strstr((const char *)buf, "\"issue_number\":");
-            int issue = p ? atoi(p + strlen("\"issue_number\":")) : -1;
-            if (issue > 0 && issue != shown_issue && download_and_refresh_comic(comack-server_ip, issue)) {
-                shown_issue = issue;
+        int64_t now = esp_timer_get_time();
+
+        if (now >= next_poll_us) {
+            next_poll_us = now + 10000 * 1000LL;
+            uint8_t buf[256];
+            int n = http_get(comack-server_ip, "/api/comics/current", buf, sizeof(buf) - 1);
+            if (n > 0) {
+                buf[n] = 0;
+                const char *p = strstr((const char *)buf, "\"issue_number\":");
+                if (p) latest = atoi(p + strlen("\"issue_number\":"));
+            }
+            // Snap back to (or advance to) the latest once browsing has timed out.
+            bool browsing = now < browse_until_us;
+            if (!browsing && latest > 0 && latest != shown && download_and_refresh_comic(comack-server_ip, latest)) {
+                shown = latest;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10000));
+
+        // Edge-triggered presses; the 50ms tick debounces.
+        bool fwd = gpio_get_level((gpio_num_t)PIN_BTN_FWD) == 0;
+        bool back = gpio_get_level((gpio_num_t)PIN_BTN_BACK) == 0;
+        int step = (fwd && !fwd_was) ? 1 : (back && !back_was) ? -1 : 0;
+        fwd_was = fwd;
+        back_was = back;
+
+        if (step && shown > 0) {
+            browse_until_us = esp_timer_get_time() + BROWSE_TIMEOUT_MS * 1000LL;
+            // Walk past deleted issues; never beyond the latest revealed one.
+            // ponytail: a dropped download also counts as a gap and gets skipped.
+            for (int target = shown + step; target >= 1 && target <= latest; target += step) {
+                ESP_LOGI(TAG, "Button: %s to #%d", step > 0 ? "forward" : "back", target);
+                if (download_and_refresh_comic(comack-server_ip, target)) {
+                    shown = target;
+                    break;
+                }
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
