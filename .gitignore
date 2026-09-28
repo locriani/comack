@@ -7,3 +7,7 @@ data/*.db
 data/audio/*
 .DS_Store
 .pio/
+firmware/include/secrets.h
+firmware/sdkconfig.reterminal_e1001
+.venv_pio/
+data/comics/
