@@ -21,7 +21,8 @@ from server.audio.vad import AudioVAD, SpeechSegment
 from server.audio.transcriber import Transcriber, TriggerListener
 from server.privacy.thematic_miner import mine_sentences
 from server.privacy.pos_scrambler import pools
-from server.story.narrative_engine import narrative_engine, prompt_log, expire_prompt_log
+from server.llm import prompt_log, expire_prompt_log
+from server.story.narrative_engine import narrative_engine
 from server.render.comic_compositor import comic_compositor
 from server.dispatcher.sneaky_dispatcher import SneakyDispatcher
 

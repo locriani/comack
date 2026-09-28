@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 import pytest
 import server.storage as st
+from server import llm as llm_client
 from server.story.narrative_engine import narrative_engine
 
 BIBLE = {"title": "Moss Patrol", "genre": "pastoral superhero", "premise": "Snails guard a pond.",
@@ -16,7 +17,7 @@ def new_arc(reply, monkeypatch):
     st.Database().create_arc("Old Show", "space noir", "A detective in orbit.", 10)
     st.db.conclude_arc()
     llm = AsyncMock(return_value=reply)
-    with patch.object(narrative_engine, "_call_llama_cpp", llm):
+    with patch.object(llm_client, "complete_json", llm):
         return asyncio.run(narrative_engine.get_or_create_active_arc()), llm
 
 

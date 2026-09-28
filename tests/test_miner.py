@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 from server.privacy import thematic_miner
-from server.story.narrative_engine import narrative_engine
+from server import llm as llm_client
 
 
 def echo(system, prompt, url=""):
@@ -18,7 +18,7 @@ class TestMiner(unittest.TestCase):
             {"vibe": "calm", "energy": "extreme", "content": "Pass the kazoo."},
             {"vibe": "extra", "energy": "low", "content": "A third thing it said."},
         ]}
-        with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=llm)), \
+        with patch.object(llm_client, "complete_json", AsyncMock(return_value=llm)), \
              patch.object(thematic_miner, "scramble_text", lambda t, rate: f"~{t}~"):
             rows = asyncio.run(thematic_miner.mine_sentences("Who moved it? I did."))
         self.assertEqual(rows, [
@@ -31,7 +31,7 @@ class TestMiner(unittest.TestCase):
         two = {"sentences": [{"vibe": "a", "energy": "low", "content": "one"},
                              {"vibe": "b", "energy": "high", "content": "two"}]}
         llm = AsyncMock(return_value=two)
-        with patch.object(narrative_engine, "_call_llama_cpp", llm), \
+        with patch.object(llm_client, "complete_json", llm), \
              patch.object(thematic_miner, "scramble_text", lambda t, rate: t):
             rows = asyncio.run(thematic_miner.mine_sentences("Pass it and lock the door."))
         self.assertEqual(rows, ["[A • LOW] one", "[B • HIGH] two"])
@@ -46,7 +46,7 @@ class TestMiner(unittest.TestCase):
             {"sentences": [{"vibe": "b", "energy": "high", "content": "two"}]},    # miner pass 2
             {"sentences": [{"vibe": "c", "energy": "low", "content": "three"}]},   # smoothing
         ])
-        with patch.object(narrative_engine, "_call_llama_cpp", llm), \
+        with patch.object(llm_client, "complete_json", llm), \
              patch.object(thematic_miner, "scramble_text", lambda t, rate: f"~{t}~"):
             rows = asyncio.run(thematic_miner.mine_sentences("Pass it."))
         pass2, smooth = (c.args[1] for c in llm.await_args_list[1:])
@@ -65,19 +65,19 @@ class TestMiner(unittest.TestCase):
                     return bad if len(calls) - 1 == failing else echo(system, prompt)
 
                 with self.subTest(failing=failing, bad=bad), \
-                     patch.object(narrative_engine, "_call_llama_cpp", llm), \
+                     patch.object(llm_client, "complete_json", llm), \
                      patch.object(thematic_miner, "scramble_text", lambda t, rate: t):
                     self.assertEqual(len(asyncio.run(thematic_miner.mine_sentences("A. B."))), left)
 
     def test_long_transcripts_are_mined_in_batches(self):
         llm = AsyncMock(side_effect=echo)
-        with patch.object(narrative_engine, "_call_llama_cpp", llm):
+        with patch.object(llm_client, "complete_json", llm):
             rows = asyncio.run(thematic_miner.mine_sentences(" ".join(["Hi."] * 30)))
         self.assertEqual(llm.await_count, 9)   # 3 batches x (mine + mine + smooth)
         self.assertEqual(len(rows), 30)
 
     def test_llm_down_stores_nothing(self):
-        with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=None)):
+        with patch.object(llm_client, "complete_json", AsyncMock(return_value=None)):
             self.assertEqual(asyncio.run(thematic_miner.mine_sentences("Hello there.")), [])
 
 

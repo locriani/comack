@@ -11,6 +11,7 @@ from typing import Optional, Tuple
 from pathlib import Path
 from PIL import Image
 
+from server import llm
 from server.config import settings
 
 logger = logging.getLogger("comack.flux")
@@ -200,9 +201,7 @@ class FluxGenerator:
         if is_flux:
             kwargs["max_sequence_length"] = 512
 
-        from server.story.narrative_engine import prompt_log
-        entry = {"at": time.time(), "model": settings.FLUX_MODEL_ID, "system": "", "prompt": prompt, "output": None}
-        prompt_log.append(entry)
+        entry = llm.log_call(settings.FLUX_MODEL_ID, "", prompt)
         raw_img = pipe(**kwargs).images[0]
         entry["output"] = f"[{gen_w}x{gen_h} image, {steps} steps]"
         return raw_img.convert("RGB")

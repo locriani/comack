@@ -6,29 +6,15 @@ incorporates scrambled overheard dialogue into comic scripts,
 and picks a page layout (comic_compositor.LAYOUTS) to suit each scene.
 """
 import json
-import time
 import random
 import logging
-import httpx
-from collections import deque
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
+from server import llm
 from server.config import settings
 from server.storage import db
-from server.render.comic_compositor import LAYOUTS, resolve_layout
+from server.layouts import LAYOUTS, resolve_layout
 
 logger = logging.getLogger("comack.story")
-
-# Recent model prompts and outputs for the dashboard's debug view. The miner's prompts hold
-# the first-pass scrambled transcript, which may not be stored: this lives in memory only.
-prompt_log: deque = deque(maxlen=60)
-PROMPT_LOG_TTL_S = 15 * 60
-
-
-def expire_prompt_log():
-    """Forget calls made more than PROMPT_LOG_TTL_S ago (entries are in call order)."""
-    cutoff = time.time() - PROMPT_LOG_TTL_S
-    while prompt_log and prompt_log[0]["at"] < cutoff:
-        prompt_log.popleft()
 
 LAYOUT_MENU = "\n".join(f'   - "{name}" ({len(p)} panel{"s" * (len(p) > 1)}): {use}'
                         for name, (use, p) in LAYOUTS.items())
@@ -93,8 +79,8 @@ class NarrativeEngine:
 
         # The arc's length is fixed here; the script model never decides when it ends.
         target_panels = random.randint(settings.ARC_MIN_PANELS, settings.ARC_MAX_PANELS)
-        bible = await self._call_llama_cpp("You invent comic series. Output ONLY valid JSON.",
-                                           arc_bible_prompt(db.get_arcs()[-12:]))
+        bible = await llm.complete_json("You invent comic series. Output ONLY valid JSON.",
+                                        arc_bible_prompt(db.get_arcs()[-12:]))
         if not bible or not all(str(bible.get(k) or "").strip() for k in BIBLE_KEYS):
             raise RuntimeError("the LLM did not invent a new arc; the next cycle retries")
         bible = {k: str(bible[k]).strip() for k in BIBLE_KEYS} | {"cast": [str(c) for c in bible.get("cast") or []][:8]}
@@ -181,7 +167,7 @@ TASK:
 }}
 """
 
-        script = await self._call_llama_cpp(system_prompt, prompt_content)
+        script = await llm.complete_json(system_prompt, prompt_content)
         
         # Fallback if LLM call fails or returns unparseable JSON
         if not script or "panels" not in script:
@@ -201,83 +187,6 @@ TASK:
             "lines_wanted_next": lines_wanted(script),
             "dialogue_used": mined_elements
         }
-
-    async def _call_llama_cpp(self, system_prompt: str, user_prompt: str, base_url: str = "") -> Optional[Dict[str, Any]]:
-        """Call llama.cpp OpenAI-compatible chat completion endpoint (default: the main model)."""
-        base = (base_url or settings.LLAMA_CPP_URL).rstrip('/')
-        if not base.endswith("/v1"):
-            url = f"{base}/v1/chat/completions"
-        else:
-            url = f"{base}/chat/completions"
-        payload = {
-            "model": settings.LLAMA_CPP_MODEL or "default",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "temperature": 0.85,
-            "response_format": {"type": "json_object"}
-        }
-        entry = {"at": time.time(), "model": url, "system": system_prompt, "prompt": user_prompt, "output": None}
-        prompt_log.append(entry)
-
-        try:
-            # Reasoning model with thinking on: generation can take minutes.
-            async with httpx.AsyncClient(timeout=600.0) as client:
-                logger.info(f"Sending prompt to llama.cpp at {url}")
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    entry["output"] = content
-                    # Extract JSON block if wrapped in markdown
-                    if "```json" in content:
-                        content = content.split("```json")[1].split("```")[0].strip()
-                    elif "```" in content:
-                        content = content.split("```")[1].split("```")[0].strip()
-                    return json.loads(content)
-                else:
-                    entry["output"] = f"HTTP {resp.status_code}: {resp.text}"
-                    logger.warning(f"llama.cpp returned status {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            entry["output"] = entry["output"] or f"error: {e!r}"
-            logger.warning(f"Failed to query llama.cpp at {url}: {e}")
-            
-        # Try OpenRouter fallback if configured
-        if settings.OPENROUTER_API_KEY:
-            return await self._call_openrouter_fallback(system_prompt, user_prompt)
-            
-        return None
-
-    async def _call_openrouter_fallback(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
-        """Secondary fallback to OpenRouter API if local server is unreachable."""
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-            "HTTP-Referer": "https://github.com/comack",
-            "X-Title": "Comack"
-        }
-        payload = {
-            "model": "google/gemini-2.5-flash",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "response_format": {"type": "json_object"}
-        }
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                logger.info("Attempting OpenRouter fallback query...")
-                resp = await client.post(url, headers=headers, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    if "```json" in content:
-                        content = content.split("```json")[1].split("```")[0].strip()
-                    return json.loads(content)
-        except Exception as e:
-            logger.warning(f"OpenRouter fallback failed: {e}")
-        return None
 
     def _create_fallback_script(self, issue_number: int, arc: Dict[str, Any], mined_elements: List[str]) -> Dict[str, Any]:
         """Robust procedural fallback script when LLM is unavailable."""

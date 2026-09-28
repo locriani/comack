@@ -8,6 +8,7 @@ import re
 import asyncio
 import logging
 from typing import List
+from server import llm
 from server.config import settings
 from server.privacy.pos_scrambler import scramble_text
 
@@ -79,14 +80,13 @@ async def _llm_pass(header: str, task: str, inputs: List[str]) -> List[dict]:
     input). Entries the model leaves empty are dropped; a failed call returns []."""
     if not inputs:
         return []
-    from server.story.narrative_engine import narrative_engine
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(inputs))
     prompt = f"""{header}
 {numbered}
 
 {task}
 Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}}"""
-    result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
+    result = await llm.complete_json(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
     items = (result or {}).get("sentences") or []
     kept = [i for i in items if isinstance(i, dict) and _content(i)]
     if not kept or len(kept) < len(items):

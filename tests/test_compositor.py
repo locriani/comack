@@ -1,7 +1,8 @@
 import os
 import unittest
 from unittest.mock import patch
-from server.render.comic_compositor import comic_compositor, LAYOUTS, resolve_layout
+from server.layouts import LAYOUTS, resolve_layout
+from server.render.comic_compositor import comic_compositor
 from server.render.flux_generator import flux_generator
 from PIL import Image
 
