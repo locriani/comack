@@ -96,11 +96,13 @@ class FluxGenerator:
         gen_h = max(256, min(1024, gen_h))
         
         prompt = (
-            f"Masterpiece graphic novel comic panel, {genre} style, "
-            f"bold clean black ink lines, dramatic chiaroscuro lighting, deep shadows, "
-            f"detailed manga crosshatching, halftone dots, high contrast ink illustration. "
+            f"1-bit monochrome e-ink comic panel, {genre} graphic novel style, "
+            f"bold crisp black ink outlines, dramatic high contrast chiaroscuro, "
+            f"heavy solid black fills, clean white negative space, "
+            f"fine crosshatching, vintage manga screentone textures, woodcut line art, "
             f"{scene_description}. "
-            f"Sharp ink linework, stark monochrome, vintage graphic print, comic art, 8k resolution, no color"
+            f"Sharp ink illustration, pure black and white, no color, no blurry gray gradients, "
+            f"crisp distinct silhouettes, optimized for 1-bit e-paper display"
         )
         
         try:
@@ -114,8 +116,12 @@ class FluxGenerator:
                 max_sequence_length=256
             )
             raw_img = result.images[0]
-            # Convert to grayscale for clean 1-bit e-paper dithering
+            # Convert to grayscale and enhance contrast for clean 1-bit dithering
+            from PIL import ImageOps, ImageEnhance
             gray_img = raw_img.convert("L")
+            gray_img = ImageOps.autocontrast(gray_img, cutoff=1)
+            enhancer = ImageEnhance.Contrast(gray_img)
+            gray_img = enhancer.enhance(1.25)
             # Resize exactly to panel target_size
             return gray_img.resize((width, height), Image.Resampling.LANCZOS)
         except Exception as e:

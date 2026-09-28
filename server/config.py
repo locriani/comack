@@ -11,6 +11,11 @@ except ImportError:
         pass
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+except ImportError:
+    pass
 DATA_DIR = BASE_DIR / "data"
 COMICS_DIR = DATA_DIR / "comics"
 AUDIO_DIR = DATA_DIR / "audio"

@@ -118,8 +118,10 @@ TASK:
    - "1-panel" if the energy represents a single dramatic climax or contemplative splash scene.
    - "2-panel" if there is a back-and-forth tension or cause-and-effect beat.
    - "3-panel" for classic setup, escalation, and absurd punchline.
-2. DO NOT quote or copy any speech phrases! Instead, invent completely original character dialogue and surreal plot progression inspired by the mined emotional vibes and abstract conflicts.
-3. Provide descriptive visual prompts for black-and-white ink comic illustrations.
+3. Provide descriptive visual prompts for black-and-white ink comic illustrations, specifically optimized for a 1-bit monochrome e-ink display:
+   - Emphasize bold silhouettes, strong foreground/background contrast, and distinct outlines.
+   - Describe scenes with stark black shadows, bright white highlights, crosshatching, halftone dots, or woodcut engraving textures.
+   - Avoid subtle color nuances, smoky haze, or smooth gray gradients that turn into muddy noise when dithered to 1-bit.
 4. Output STRICT JSON in this exact structure:
 {{
   "title": "A witty, deadpan issue title",
@@ -127,7 +129,7 @@ TASK:
   "panels": [
     {{
       "panel_number": 1,
-      "scene_description": "Detailed visual description of black and white comic scene, characters, setting, perspective",
+      "scene_description": "High-contrast black and white ink scene description: bold character silhouettes, heavy ink outlines, stark shadows, crosshatching patterns, setting, perspective",
       "narration": "Optional caption box text (e.g. 'Meanwhile, in Sector 9...')",
       "speech_balloons": [
         {{"character": "Character Name", "text": "Completely original spoken dialogue inspired by the theme"}}

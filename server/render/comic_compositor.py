@@ -61,8 +61,11 @@ def dither_to_1bit_monochrome(image: Image.Image) -> Tuple[Image.Image, bytes]:
     Apply high-contrast Floyd-Steinberg error diffusion dithering.
     Returns: (monochrome_pil_image, packed_48000_bytes)
     """
+    from PIL import ImageOps, ImageEnhance
     gray = image.convert("L")
-    # Enhance contrast before dithering for crisp e-ink lines
+    # Enhance contrast and stretch dynamic range for punchy e-ink blacks and whites
+    gray = ImageOps.autocontrast(gray, cutoff=1)
+    gray = ImageEnhance.Contrast(gray).enhance(1.2)
     dithered = gray.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
     
     # Pack 800x480 1-bit image into raw bytes (1 bit per pixel, 100 bytes per row)
