@@ -142,26 +142,15 @@ class ComicCompositor:
         Returns: (png_path, bin_path)
         """
         issue_number = script.get("issue_number", 1)
-        series_issue = script.get("series_issue", issue_number)  # printed; issue_number names the files
-        title = script.get("title", f"Issue #{series_issue}")
         panels = script.get("panels", [])
         layout_type = resolve_layout(script.get("layout_type", ""), len(panels))
-        
+
         # Base canvas in RGB
         canvas = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
-        draw = ImageDraw.Draw(canvas)
-        
+
         # 1. Render Top Header Banner
-        draw.rectangle([0, 0, WIDTH, self.banner_height], fill=(0, 0, 0))
-        arc_title = script.get("arc_title") or "COMACK"
-        header_text = f"{arc_title.upper()}  •  ISSUE #{series_issue:03d}  •  {title.upper()}"
-        size = 14
-        header_font = _get_font(size, bold=True)
-        while size > 8 and draw.textlength(header_text, font=header_font) > WIDTH - 2 * self.margin:
-            size -= 1  # shrink long titles to fit the banner
-            header_font = _get_font(size, bold=True)
-        draw.text((self.margin, 6), header_text, fill=(255, 255, 255), font=header_font)
-        
+        self._draw_header(canvas, script)
+
         # 2. Panel area, grown by half a gutter since each panel shrinks by that much
         h = self.gutter // 2
         left, top = self.margin - h, self.banner_height + self.margin - h
@@ -195,6 +184,35 @@ class ComicCompositor:
         dithered_img.save(png_path)
         bin_path.write_bytes(bin_bytes)
         return png_path, bin_path
+
+    def _draw_header(self, img: Image.Image, script: Dict[str, Any]):
+        """The black banner: series title, issue number within the series, issue title."""
+        issue_number = script.get("issue_number", 1)
+        series_issue = script.get("series_issue", issue_number)  # printed; issue_number names the files
+        title = script.get("title", f"Issue #{series_issue}")
+        draw = ImageDraw.Draw(img)
+        draw.rectangle([0, 0, WIDTH, self.banner_height], fill="black")
+        arc_title = script.get("arc_title") or "COMACK"
+        header_text = f"{arc_title.upper()}  •  ISSUE #{series_issue:03d}  •  {title.upper()}"
+        size = 14
+        header_font = _get_font(size, bold=True)
+        while size > 8 and draw.textlength(header_text, font=header_font) > WIDTH - 2 * self.margin:
+            size -= 1  # shrink long titles to fit the banner
+            header_font = _get_font(size, bold=True)
+        draw.text((self.margin, 6), header_text, fill="white", font=header_font)
+
+    def redraw_header(self, script: Dict[str, Any]):
+        """Repaint an issue's banner on its saved pages (no new art). The banner is pure black and
+        white, so painting it straight onto the 1-bit page is exact."""
+        stem = COMICS_DIR / f"issue_{script['issue_number']:04d}"
+        for path in (Path(f"{stem}.png"), Path(f"{stem}_color.png")):
+            if path.exists():
+                with Image.open(path) as page:
+                    page.load()
+                self._draw_header(page, script)
+                page.save(path)
+                if page.mode == "1":
+                    Path(f"{stem}.bin").write_bytes(page.tobytes())
 
     def _draw_panels(self, canvas, layout_type, panels, left, top, area_w, area_h, h) -> List[Optional[Image.Image]]:
         """Draws every panel; returns each panel's original model art (None for procedural art)."""

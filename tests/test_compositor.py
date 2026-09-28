@@ -49,6 +49,25 @@ class TestComicCompositor(unittest.TestCase):
             for f in files:
                 f.unlink()
 
+    def test_redraw_header_changes_only_the_banner(self):
+        script = {"issue_number": 997, "title": "Hdr", "layout_type": "splash", "panels": [panel(1)]}
+        png_path, bin_path = comic_compositor.compose_comic(script)
+        color = png_path.with_name("issue_0997_color.png")
+        try:
+            with Image.open(png_path) as before:
+                before = before.copy()
+            comic_compositor.redraw_header({**script, "series_issue": 1})
+            with Image.open(png_path) as after:
+                self.assertEqual(after.mode, "1")
+                banner = (0, 0, 800, comic_compositor.banner_height + 1)
+                self.assertNotEqual(before.crop(banner).tobytes(), after.crop(banner).tobytes())
+                below = (0, comic_compositor.banner_height + 1, 800, 480)
+                self.assertEqual(before.crop(below).tobytes(), after.crop(below).tobytes())
+                self.assertEqual(bin_path.read_bytes(), after.tobytes())
+        finally:
+            for f in (png_path, bin_path, color):
+                f.unlink()
+
     def test_resolve_layout(self):
         self.assertEqual(resolve_layout("action", 4), "action")
         # Mismatch or unknown -> the plain layout for that count, never random
