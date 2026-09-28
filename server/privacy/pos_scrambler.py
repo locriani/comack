@@ -22,12 +22,27 @@ BROWN_TO_PENN = {
     "VBN": "VBN", "VBZ": "VBZ", "JJ": "JJ", "RB": "RB"
 }
 
-# Slurs and insults that occur in the (1961) Brown corpus; never used as replacements.
+# Words from the (1961) Brown corpus never used as replacements: dropped in at random, each
+# could turn an innocent sentence into a racial or bigoted jab. Swearing is fine.
 BLOCKLIST = {
+    # slurs and insults
     "negro", "negroes", "nigger", "niggers", "savage", "savages", "bastard", "bastards",
-    "retarded", "retard", "queer", "bitch", "gypsy", "gypsies", "crackers", "japs", "injun",
-    "injuns", "coons", "whore", "whores", "hun", "dyke", "kraut", "krauts", "paddies", "mick",
-    "cripple", "spic", "squaw", "wop", "wops", "blackman", "whitey"
+    "retarded", "retard", "retardation", "queer", "bitch", "gypsy", "gypsies", "crackers",
+    "japs", "injun", "injuns", "coons", "whore", "whores", "hun", "dyke", "kraut", "krauts",
+    "paddies", "mick", "cripple", "spic", "squaw", "wop", "wops", "pansy", "pansies", "gay",
+    "homosexuals", "hillbilly", "rape",
+    # everyday words that double as racial slurs or stereotypes
+    "colored", "swarthy", "aborigine", "aborigines", "jig", "spade", "spades", "gyp", "eskimo",
+    "shylock", "ape", "monkey", "buck", "bucks", "breed", "ebony", "jungle", "jungles", "sheik",
+    "ching", "orient", "turk",
+    # skin colour and race
+    "blackman", "whitey", "whiteman", "black", "blackness", "white", "whites", "brown",
+    "yellow", "red", "dark", "nonwhite", "race", "races", "racial", "redcoat", "redcoats",
+    # hate groups, Nazis, slavery, segregation
+    "klan", "klux", "nazi", "hitler", "adolf", "eichmann", "heydrich", "globocnik", "reich",
+    "majdanek", "holocaust", "fascism", "lalaurie", "calhoun", "slave", "slaves", "slavery",
+    "plantation", "freedmen", "confederacy", "dixieland", "segregation", "segregated",
+    "segregationist", "desegregation", "desegregated", "supremacy", "ghetto", "ghettos", "urban"
 }
 
 # Only prepositions that rarely act as conjunctions ("for", "after", "since" often do), so a
