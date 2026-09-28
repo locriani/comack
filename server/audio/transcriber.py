@@ -56,11 +56,15 @@ def pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
     return buf.getvalue()
 
 
-def reliable(segment) -> bool:
-    """False for a Whisper segment that is low-confidence or looks hallucinated."""
-    return (segment.avg_logprob >= settings.WHISPER_MIN_AVG_LOGPROB
-            and segment.compression_ratio <= settings.WHISPER_MAX_COMPRESSION
-            and segment.no_speech_prob <= settings.WHISPER_MAX_NO_SPEECH)
+def unreliable(segment) -> Optional[str]:
+    """Why a Whisper segment looks hallucinated, or None if it's fine. Whisper's own two checks:
+    repetitive text, or probably-not-speech that it's also unsure of. Low confidence alone is
+    kept: faster-whisper already re-decodes those at higher temperatures."""
+    if segment.compression_ratio > settings.WHISPER_MAX_COMPRESSION:
+        return "repetitive"
+    if segment.no_speech_prob > settings.WHISPER_MAX_NO_SPEECH and segment.avg_logprob < settings.WHISPER_MIN_AVG_LOGPROB:
+        return "not speech"
+    return None
 
 
 def find_trigger(text: str) -> Optional[str]:
@@ -153,10 +157,16 @@ class Transcriber:
             try:
                 wav_io = io.BytesIO(pcm_to_wav_bytes(pcm_bytes))
                 segments, _ = model.transcribe(wav_io, beam_size=2, language="en")
-                segments = list(segments)
-                kept = [s.text.strip() for s in segments if reliable(s)]
-                if len(kept) < len(segments):
-                    logger.info(f"Skipped {len(segments) - len(kept)} of {len(segments)} unreliable segments.")
+                kept, skipped = [], []
+                for s in segments:
+                    why = unreliable(s)
+                    if why:  # scores only: the text is never logged
+                        skipped.append(f"{why} (logprob {s.avg_logprob:.2f}, ratio {s.compression_ratio:.2f}, "
+                                       f"no-speech {s.no_speech_prob:.2f})")
+                    else:
+                        kept.append(s.text.strip())
+                if skipped:
+                    logger.info(f"Skipped {len(skipped)} of {len(skipped) + len(kept)} segments: {'; '.join(skipped)}")
                 return " ".join(kept)
             except Exception as e:
                 logger.error(f"Error in faster-whisper transcription: {e}")

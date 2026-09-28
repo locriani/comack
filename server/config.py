@@ -39,8 +39,8 @@ class Settings(BaseModel):
     # Whisper Speech-to-Text configuration
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "base.en")
     WHISPER_DEVICE: str = os.getenv("WHISPER_DEVICE", "auto")  # 'cuda', 'cpu', or 'auto'
-    # A transcribed segment is skipped as unreliable or hallucinated when any of these trips
-    # (Whisper's own thresholds): too unsure, too repetitive, or probably not speech at all.
+    # A transcribed segment is skipped as hallucinated (Whisper's own thresholds) when it is too
+    # repetitive, or probably not speech AND low-confidence.
     WHISPER_MIN_AVG_LOGPROB: float = float(os.getenv("WHISPER_MIN_AVG_LOGPROB", "-1.0"))
     WHISPER_MAX_COMPRESSION: float = float(os.getenv("WHISPER_MAX_COMPRESSION", "2.4"))
     WHISPER_MAX_NO_SPEECH: float = float(os.getenv("WHISPER_MAX_NO_SPEECH", "0.6"))

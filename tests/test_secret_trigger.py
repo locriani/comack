@@ -65,12 +65,17 @@ class TestSecretTrigger(unittest.TestCase):
 
         class Model:
             def transcribe(self, *a, **k):
-                return iter([seg("Pass the mug."), seg("mumble", logprob=-1.4),
+                return iter([seg("Pass the mug."), seg("Unsure but real.", logprob=-1.4),
                              seg("thanks thanks thanks", ratio=3.1),
-                             seg("Thank you for watching.", no_speech=0.9), seg("Sure.")]), None
+                             seg("Thank you for watching.", logprob=-1.2, no_speech=0.9),
+                             seg("Quiet but sure.", no_speech=0.9), seg("Sure.")]), None
 
-        with patch("server.audio.transcriber._get_whisper_model", return_value=Model()):
-            self.assertEqual(Transcriber()._transcribe(CHUNK), "Pass the mug. Sure.")
+        with patch("server.audio.transcriber._get_whisper_model", return_value=Model()), \
+             self.assertLogs("comack.transcriber") as logs:
+            self.assertEqual(Transcriber()._transcribe(CHUNK),
+                             "Pass the mug. Unsure but real. Quiet but sure. Sure.")
+        self.assertIn("Skipped 2 of 6 segments: repetitive", logs.output[0])
+        self.assertNotIn("thanks", logs.output[0])   # scores are logged, never the text
 
         class Broken:
             def transcribe(self, *a, **k):
