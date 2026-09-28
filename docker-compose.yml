@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  comack:
+    build: .
+    container_name: comack-server
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LLAMA_CPP_URL=http://127.0.0.1:80/v1
+      - SNEAKY_SILENCE_SECONDS=50.0
+      - COMIC_CYCLE_MINUTES=30
+      - POS_SCRAMBLE_RATE=0.25
+      - ARC_MIN_HOURS=4.0
+      - ARC_MAX_HOURS=168.0
+    volumes:
+      - ./data:/app/data

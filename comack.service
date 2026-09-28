@@ -1,0 +1,17 @@
+[Unit]
+Description=Comack Continuous Comic Server
+After=network.target
+
+[Service]
+Type=simple
+User=locriani
+WorkingDirectory=/opt/comack
+ExecStart=/opt/comack/.venv/bin/uvicorn server.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=LLAMA_CPP_URL=http://127.0.0.1:80/v1
+Environment=SNEAKY_SILENCE_SECONDS=50.0
+
+[Install]
+WantedBy=multi-user.target
