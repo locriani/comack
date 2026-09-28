@@ -109,6 +109,10 @@ class NarrativeEngine:
         mined_elements = [item["scrambled_text"] for item in transcript_items if item.get("scrambled_text")]
         # ponytail: last 50 issues keeps the prompt bounded (~15k tokens); summarize older ones if the plot drifts.
         history = story_so_far(db.get_recent_comics(50)[::-1])
+        history_section = (
+            "Story So Far (text of every previous issue, oldest first). Continue this plot directly: "
+            f"keep the same characters, running jokes, and unresolved threads:\n{history}\n\n"
+        ) if history else ""
 
         system_prompt = (
             "You are the master creator of 'COMACK', an ongoing, surreal comic strip that transforms "
@@ -127,10 +131,7 @@ Arc Premise: {arc['premise']}
 Arc Progress: {arc_progress * 100:.1f}% (Hour {elapsed_hours:.1f} of {arc['target_duration_hours']}h)
 Issue Number: #{issue_number}
 
-Story So Far (text of every previous issue, oldest first). Continue this plot directly: keep the same characters, running jokes, and unresolved threads:
-{history or '(Nothing yet. This is the very first issue.)'}
-
-Mined Thematic Elements & Emotional Vibes from the past 30 minutes:
+{history_section}Mined Thematic Elements & Emotional Vibes from the past 30 minutes:
 {json.dumps(mined_elements, indent=2) if mined_elements else '["(Eerie room silence... only the ambient hum of quantum machinery)"]'}
 
 TASK:
