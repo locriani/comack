@@ -5,12 +5,18 @@ from server.privacy import thematic_miner
 from server.story.narrative_engine import narrative_engine
 
 
+def echo(system, prompt, url=""):
+    """A model that answers one entry per numbered input line."""
+    n = sum(1 for line in prompt.splitlines() if line.split(". ", 1)[0].isdigit())
+    return {"sentences": [{"vibe": "x", "energy": "low", "content": "y"}] * n}
+
+
 class TestMiner(unittest.TestCase):
-    def test_one_row_per_sentence_with_capped_vibe_and_energy(self):
+    def test_rows_with_capped_vibe_and_energy_and_a_sentence_can_yield_several(self):
         llm = {"sentences": [
             {"vibe": "very deeply suspicious badger", "energy": "HIGH", "content": "The toaster knows."},
             {"vibe": "calm", "energy": "extreme", "content": "Pass the kazoo."},
-            {"vibe": "extra", "energy": "low", "content": "Beyond the input count."},
+            {"vibe": "extra", "energy": "low", "content": "A third thing it said."},
         ]}
         with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=llm)), \
              patch.object(thematic_miner, "scramble_text", lambda t, rate: f"~{t}~"):
@@ -18,7 +24,21 @@ class TestMiner(unittest.TestCase):
         self.assertEqual(rows, [
             "[VERY DEEPLY SUSPICIOUS • HIGH] The toaster knows.",
             "[CALM • MEDIUM] Pass the kazoo.",
+            "[EXTRA • LOW] A third thing it said.",
         ])
+
+    def test_one_sentence_saying_two_things_keeps_both(self):
+        two = {"sentences": [{"vibe": "a", "energy": "low", "content": "one"},
+                             {"vibe": "b", "energy": "high", "content": "two"}]}
+        llm = AsyncMock(return_value=two)
+        with patch.object(narrative_engine, "_call_llama_cpp", llm), \
+             patch.object(thematic_miner, "scramble_text", lambda t, rate: t):
+            rows = asyncio.run(thematic_miner.mine_sentences("Pass it and lock the door."))
+        self.assertEqual(rows, ["[A • LOW] one", "[B • HIGH] two"])
+        pass1, pass2, smooth = (c.args[1] for c in llm.await_args_list)
+        self.assertNotIn("exactly", pass1)             # the miner may split a sentence
+        self.assertIn("2. two", pass2)                 # both lines go through every pass
+        self.assertIn("exactly one entry", smooth)     # smoothing is one-for-one
 
     def test_mine_scramble_mine_smooth(self):
         llm = AsyncMock(side_effect=[
@@ -35,20 +55,22 @@ class TestMiner(unittest.TestCase):
         self.assertEqual(rows, ["[C • LOW] three"])    # the stored tags are smoothing's
 
     def test_a_line_any_pass_fails_is_dropped(self):
-        ok = {"sentences": [{"vibe": "a", "energy": "low", "content": "one"},
-                            {"vibe": "a", "energy": "low", "content": "two"}]}
         botched = {"sentences": [{"vibe": "a", "energy": "low", "content": "one"}, {"vibe": "a"}]}
         for failing in range(3):
             for bad, left in ((None, 0), (botched, 1)):
-                replies = [ok, ok, ok]
-                replies[failing] = bad
+                calls = []
+
+                async def llm(system, prompt, url=""):
+                    calls.append(prompt)
+                    return bad if len(calls) - 1 == failing else echo(system, prompt)
+
                 with self.subTest(failing=failing, bad=bad), \
-                     patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(side_effect=replies)), \
+                     patch.object(narrative_engine, "_call_llama_cpp", llm), \
                      patch.object(thematic_miner, "scramble_text", lambda t, rate: t):
                     self.assertEqual(len(asyncio.run(thematic_miner.mine_sentences("A. B."))), left)
 
     def test_long_transcripts_are_mined_in_batches(self):
-        llm = AsyncMock(return_value={"sentences": [{"vibe": "x", "energy": "low", "content": "y"}] * 12})
+        llm = AsyncMock(side_effect=echo)
         with patch.object(narrative_engine, "_call_llama_cpp", llm):
             rows = asyncio.run(thematic_miner.mine_sentences(" ".join(["Hi."] * 30)))
         self.assertEqual(llm.await_count, 9)   # 3 batches x (mine + mine + smooth)

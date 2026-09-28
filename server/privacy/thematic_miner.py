@@ -22,13 +22,13 @@ SYSTEM_PROMPT = (
     "Output ONLY valid JSON."
 )
 
-MINE_TASK = """For EACH sentence, in order, write:
+MINE_TASK = """For EACH sentence, in order, write one entry, or several if it says several distinct things:
 - "vibe": its emotional vibe in at most 3 words
 - "energy": "low", "medium", or "high"
-- "content": a comic line riffing on the sentence, keeping its key words.
+- "content": a comic line riffing on the sentence (or that part of it), keeping its key words.
   It MUST be coherent, grammatical English that makes sense on its own."""
 
-SMOOTH_TASK = """For EACH line, in order, write:
+SMOOTH_TASK = """For EACH line, in order, write exactly one entry:
 - "vibe" and "energy": the ones in its [VIBE • ENERGY] tag
 - "content": the line rewritten as coherent, grammatical English that makes sense on its own.
   Keep its words (including the odd ones); change only what grammar needs."""
@@ -54,7 +54,7 @@ BATCH_SENTENCES = 12  # a 5-minute transcript would overflow the small miner mod
 
 
 async def mine_sentences(scrambled: str) -> List[str]:
-    """Returns one stored row per sentence that survives every pass, BATCH_SENTENCES at a time."""
+    """Returns the stored rows (one or more per sentence) that survive every pass, BATCH_SENTENCES at a time."""
     sentences = split_sentences(scrambled)
     rows = []
     for i in range(0, len(sentences), BATCH_SENTENCES):
@@ -71,14 +71,12 @@ async def _mine_batch(sentences: List[str]) -> List[str]:
         lambda: [scramble_text(_content(i), settings.POS_SCRAMBLE_RATE) for i in first])
     second = await _llm_pass("Overheard sentences:", MINE_TASK, scrambled)
     final = await _llm_pass("Comic lines:", SMOOTH_TASK, [format_row(i) for i in second])
-    if len(final) < len(sentences):
-        logger.warning(f"Miner dropped {len(sentences) - len(final)} of {len(sentences)} line(s): a model pass failed.")
     return [format_row(i) for i in final]
 
 
 async def _llm_pass(header: str, task: str, inputs: List[str]) -> List[dict]:
-    """One miner LLM call: a {vibe, energy, content} dict per input, in order. Entries the model
-    skips or leaves empty are missing; a failed call returns []."""
+    """One miner LLM call: {vibe, energy, content} dicts, in order (the task says how many per
+    input). Entries the model leaves empty are dropped; a failed call returns []."""
     if not inputs:
         return []
     from server.story.narrative_engine import narrative_engine
@@ -87,7 +85,10 @@ async def _llm_pass(header: str, task: str, inputs: List[str]) -> List[dict]:
 {numbered}
 
 {task}
-Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} with exactly {len(inputs)} entries."""
+Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}}"""
     result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
     items = (result or {}).get("sentences") or []
-    return [i for i in items[:len(inputs)] if isinstance(i, dict) and _content(i)]
+    kept = [i for i in items if isinstance(i, dict) and _content(i)]
+    if not kept or len(kept) < len(items):
+        logger.warning(f"Miner pass kept {len(kept)} of {len(items)} entries for {len(inputs)} input(s); the rest are dropped.")
+    return kept
