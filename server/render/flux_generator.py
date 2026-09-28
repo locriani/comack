@@ -124,11 +124,12 @@ class FluxGenerator:
     def generate_panel_art(self, scene_description: str, target_size: Tuple[int, int],
                            genre: str = "Graphic Novel") -> Optional[Image.Image]:
         """
-        Generate comic panel artwork (grayscale out; the compositor dithers it).
+        Generate comic panel artwork.
         :param scene_description: Visual description from the story engine
-        :param target_size: (width, height) in pixels
+        :param target_size: (width, height) of the panel in pixels; the image comes back at the
+            model's own resolution with about this aspect ratio (the compositor saves and fits it)
         :param genre: Comic genre context
-        :return: PIL Image, or None only when no local pipeline exists at all
+        :return: the model's original RGB image, or None only when no local pipeline exists at all
         :raises PanelArtFailed: every retry failed
         """
         # 1. External ComfyUI / HTTP endpoint if configured
@@ -204,13 +205,7 @@ class FluxGenerator:
         prompt_log.append(entry)
         raw_img = pipe(**kwargs).images[0]
         entry["output"] = f"[{gen_w}x{gen_h} image, {steps} steps]"
-        # Convert to grayscale and enhance contrast for clean 1-bit dithering
-        from PIL import ImageOps, ImageEnhance
-        gray_img = raw_img.convert("L")
-        gray_img = ImageOps.autocontrast(gray_img, cutoff=1)
-        gray_img = ImageEnhance.Contrast(gray_img).enhance(1.25)
-        # Resize exactly to panel target_size
-        return gray_img.resize((width, height), Image.Resampling.LANCZOS)
+        return raw_img.convert("RGB")
 
     def _generate_via_api(self, prompt: str, target_size: Tuple[int, int]) -> Optional[Image.Image]:
         """Optional HTTP generation if ComfyUI or SD endpoint is running on comack-server."""
@@ -226,7 +221,7 @@ class FluxGenerator:
                     data = resp.json()
                     b64_str = data["data"][0]["b64_json"]
                     img_bytes = base64.b64decode(b64_str)
-                    return Image.open(io.BytesIO(img_bytes)).resize(target_size)
+                    return Image.open(io.BytesIO(img_bytes)).convert("RGB")
         except Exception as e:
             logger.warning(f"Error querying FLUX API endpoint: {e}")
         return None

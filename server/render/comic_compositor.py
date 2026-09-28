@@ -7,7 +7,7 @@ Outputs both PNG preview and 48,000-byte 1-bit packed binary for the reTerminal 
 import math
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 from server.config import settings, COMICS_DIR
 
@@ -170,11 +170,19 @@ class ComicCompositor:
         #    by half a gutter, then a black ring for the frame
         from server.render.flux_generator import release_pipeline
         try:
-            self._draw_panels(canvas, layout_type, panels, left, top, area_w, area_h, h)
+            originals = self._draw_panels(canvas, layout_type, panels, left, top, area_w, area_h, h)
         finally:  # also when a panel gives up (PanelArtFailed): the pipeline holds ~17 GB of RAM
             release_pipeline()
 
-        # 4. Dither and Export
+        # 4. Keep the originals: each panel's art as the model made it, and the full-color page
+        #    before halftoning (so a better halftoner or display can redo the page later)
+        stem = COMICS_DIR / f"issue_{issue_number:04d}"
+        for i, art in enumerate(originals, 1):
+            if art is not None:
+                art.save(f"{stem}_panel{i}.png")
+        canvas.save(f"{stem}_color.png")
+
+        # 5. Dither and Export
         dithered_img, bin_bytes = dither_to_1bit_monochrome(canvas)
 
         # Ensure 48,000 bytes exactly
@@ -187,7 +195,9 @@ class ComicCompositor:
         bin_path.write_bytes(bin_bytes)
         return png_path, bin_path
 
-    def _draw_panels(self, canvas, layout_type, panels, left, top, area_w, area_h, h):
+    def _draw_panels(self, canvas, layout_type, panels, left, top, area_w, area_h, h) -> List[Optional[Image.Image]]:
+        """Draws every panel; returns each panel's original model art (None for procedural art)."""
+        originals = []
         for i, quad in enumerate(LAYOUTS[layout_type][1]):
             panel_data = panels[i] if i < len(panels) else {}
             pts = [(left + fx * area_w, top + fy * area_h) for fx, fy in quad]
@@ -200,15 +210,16 @@ class ComicCompositor:
             text_box = tuple(round(v) for v in (max(tlx, blx) + h, max(tly, try_) + h,
                                                 min(trx, brx) - h, min(bly, bry) - h))
             layer = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
-            self._render_panel(layer, ImageDraw.Draw(layer), inner.getbbox(), text_box, panel_data, i)
+            originals.append(self._render_panel(layer, ImageDraw.Draw(layer), inner.getbbox(), text_box, panel_data, i))
             canvas.paste(layer, mask=inner)
             canvas.paste((0, 0, 0), mask=ImageChops.subtract(inner, inner.filter(ImageFilter.MinFilter(7))))
+        return originals
 
     def _render_panel(self, canvas: Image.Image, draw: ImageDraw.ImageDraw,
                       box: Tuple[int, int, int, int], text_box: Tuple[int, int, int, int],
-                      panel_data: Dict[str, Any], index: int):
+                      panel_data: Dict[str, Any], index: int) -> Optional[Image.Image]:
         """Render illustration (filling box), then narrator box, speech balloons, and SFX (inside text_box).
-        The caller clips to the panel shape and draws the frame."""
+        The caller clips to the panel shape and draws the frame. Returns the model's original art."""
         x0, y0, x1, y1 = box
         p_width = x1 - x0
         p_height = y1 - y0
@@ -219,7 +230,7 @@ class ComicCompositor:
         flux_img = flux_generator.generate_panel_art(scene_desc, (p_width, p_height))
         
         if flux_img:
-            canvas.paste(flux_img.convert("RGB"), (x0, y0))
+            canvas.paste(flux_img.resize((p_width, p_height), Image.Resampling.LANCZOS), (x0, y0))
         else:
             self._render_comic_art(draw, box, panel_data, index)
         
@@ -259,6 +270,7 @@ class ComicCompositor:
             # Draw comic drop shadow
             draw.text((sfx_x + 2, sfx_y + 2), sfx.upper(), fill=(0, 0, 0), font=sfx_font)
             draw.text((sfx_x, sfx_y), sfx.upper(), fill=(0, 0, 0), font=sfx_font)
+        return flux_img
 
     def _render_comic_art(self, draw: ImageDraw.ImageDraw, box: Tuple[int, int, int, int],
                           panel_data: Dict[str, Any], index: int):
