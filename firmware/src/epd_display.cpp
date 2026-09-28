@@ -107,10 +107,22 @@ void EPDDisplay::sendData(uint8_t data) {
 
 void EPDDisplay::sendDataBytes(const uint8_t* data, size_t length) {
     gpio_set_level((gpio_num_t)PIN_EPD_DC, 1);
-    spi_transaction_t t = {};
-    t.length = length * 8;
-    t.tx_buffer = data;
-    spi_device_polling_transmit(_spi, &t);
+    // One SPI transaction is limited to 32 KB on the S3, so send in chunks.
+    // Frames arrive as 1 = white, but with this init (CDI 0x10) register 0x13 treats 1 = black: invert.
+    const size_t CHUNK = 4096;
+    static uint8_t chunk[CHUNK];
+    for (size_t off = 0; off < length; off += CHUNK) {
+        size_t n = (length - off < CHUNK) ? (length - off) : CHUNK;
+        for (size_t i = 0; i < n; i++) chunk[i] = ~data[off + i];
+        spi_transaction_t t = {};
+        t.length = n * 8;
+        t.tx_buffer = chunk;
+        esp_err_t err = spi_device_polling_transmit(_spi, &t);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "SPI transmit failed at offset %d: %d", (int)off, err);
+            return;
+        }
+    }
 }
 
 void EPDDisplay::displayFrame(const uint8_t* image_buffer) {
@@ -118,32 +130,42 @@ void EPDDisplay::displayFrame(const uint8_t* image_buffer) {
     reset();
     waitBusy();
 
-    // Booster soft start
-    sendCommand(EPD_CMD_BOOSTER_SOFT_START);
-    sendData(0x17);
-    sendData(0x17);
-    sendData(0x28);
-    sendData(0x17);
+    // Power setting: VGH/VGL 20V, VDH/VDL 15V
+    sendCommand(EPD_CMD_POWER_SETTING);
+    sendData(0x07);
+    sendData(0x07);
+    sendData(0x3F);
+    sendData(0x3F);
 
     // Power on
     sendCommand(EPD_CMD_POWER_ON);
+    vTaskDelay(pdMS_TO_TICKS(100));
     waitBusy();
 
-    // Panel setting (800x480, OTP LUT)
+    // Panel setting (KW mode, LUT from OTP)
     sendCommand(EPD_CMD_PANEL_SETTING);
-    sendData(0x1F); // 800x480, LUT from OTP
+    sendData(0x1F);
 
-    // Resolution setting
+    // Resolution setting (800x480)
     sendCommand(EPD_CMD_RESOLUTION_SETTING);
     sendData(EPD_WIDTH >> 8);
     sendData(EPD_WIDTH & 0xFF);
     sendData(EPD_HEIGHT >> 8);
     sendData(EPD_HEIGHT & 0xFF);
 
-    // Transfer bitmap data
-    sendCommand(EPD_CMD_DATA_START_1);
-    sendDataBytes(image_buffer, EPD_BUFFER_BYTES);
+    sendCommand(0x15);
+    sendData(0x00);
 
+    // VCOM and data interval
+    sendCommand(0x50);
+    sendData(0x10);
+    sendData(0x07);
+
+    // TCON setting
+    sendCommand(EPD_CMD_TCON_SETTING);
+    sendData(0x22);
+
+    // Transfer bitmap data (1 = white, 0 = black; 1-bit mode uses the new-data register only)
     sendCommand(EPD_CMD_DATA_START_2);
     sendDataBytes(image_buffer, EPD_BUFFER_BYTES);
 

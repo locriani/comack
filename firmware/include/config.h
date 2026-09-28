@@ -13,21 +13,12 @@ typedef struct {
     const char *pass;
 } wifi_cred_t;
 
-static const wifi_cred_t WIFI_NETWORKS[] = {
-    { "Example-WiFi-1",    "REDACTED_WIFI_PASS" },
-    { "Example-WiFi-2",       "REDACTED_WIFI_PASS" },
-    { "Example-WiFi-3",    "REDACTED_WIFI_PASS" },
-    { "Example-WiFi-4",        "REDACTED_WIFI_PASS" }
-};
-static const int WIFI_NETWORK_COUNT = sizeof(WIFI_NETWORKS) / sizeof(WIFI_NETWORKS[0]);
 
-// Deskserver Host Configuration (Tailscale IP)
-#define COMACK_SERVER_HOST  "100.64.0.1"
+// Deskserver Host Configuration (Tailscale MagicDNS name)
+#define COMACK_SERVER_HOST  "comack-server"
 #define COMACK_SERVER_PORT  8000
 
-// Tailscale Authentication Configuration
-// Generate an auth key at: https://login.tailscale.com/admin/settings/keys
-#define TAILSCALE_AUTH_KEY      "tskey-auth-REDACTED"
+// Tailscale Authentication: see secrets.h
 #define TAILSCALE_DEVICE_NAME   "comack-display"
 
 // Audio Streaming Sample Rate

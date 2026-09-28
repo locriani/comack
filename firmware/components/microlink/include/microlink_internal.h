@@ -24,8 +24,13 @@
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "mbedtls/ssl.h"
+#if __has_include("mbedtls/entropy.h")
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
+#elif __has_include("mbedtls/private/entropy.h")
+#include "mbedtls/private/entropy.h"
+#include "mbedtls/private/ctr_drbg.h"
+#endif
 #include "esp_heap_caps.h"
 
 #ifdef CONFIG_ML_ZERO_COPY_WG

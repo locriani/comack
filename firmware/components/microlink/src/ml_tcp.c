@@ -214,7 +214,9 @@ esp_err_t microlink_tcp_send(microlink_tcp_socket_t *sock, const void *data, siz
 
     size_t sent = 0;
     while (sent < len) {
-        int n = send(sock->fd, (const uint8_t *)data + sent, len - sent, 0);
+        /* MSG_DONTWAIT: a blocking send that hits SO_SNDTIMEO leaves lwIP with a dangling
+         * pending write, and the next ACK crashes in lwip_netconn_do_writemore. */
+        int n = send(sock->fd, (const uint8_t *)data + sent, len - sent, MSG_DONTWAIT);
         if (n <= 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 vTaskDelay(pdMS_TO_TICKS(10));

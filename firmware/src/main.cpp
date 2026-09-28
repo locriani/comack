@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -12,9 +13,11 @@
 #include "esp_heap_caps.h"
 
 #include "config.h"
+#include "secrets.h"
 #include "mic_sampler.h"
 #include "epd_display.h"
 #include "microlink.h"
+#include "ws_client.h"
 
 static const char *TAG = "COMACK";
 
@@ -119,76 +122,91 @@ static void wifi_init(void) {
  * Comack Network Tasks (Audio Streamer + Comic Downloader)
  * ========================================================================== */
 
-static void download_and_refresh_comic(uint32_t dest_ip) {
-    ESP_LOGI(TAG, "Fetching comic binary from comack-server (100.64.0.1:8000)...");
-    microlink_tcp_socket_t *sock = microlink_tcp_connect(ml, dest_ip, COMACK_SERVER_PORT, 10000);
-    if (!sock) {
-        ESP_LOGE(TAG, "Failed to connect TCP to comack-server over Tailscale!");
-        return;
-    }
+// Resolve the server via Tailscale MagicDNS (falls back to a literal IP). 0 = not yet known.
+static uint32_t resolve_server(void) {
+    uint32_t ip = microlink_resolve(ml, COMACK_SERVER_HOST);
+    return ip ? ip : microlink_parse_ip(COMACK_SERVER_HOST);
+}
 
-    // Send HTTP GET request
-    const char *get_req = "GET /api/comics/current.bin HTTP/1.1\r\n"
-                          "Host: 100.64.0.1:8000\r\n"
-                          "Connection: close\r\n\r\n";
-    microlink_tcp_send(sock, get_req, strlen(get_req));
+// HTTP GET over the tunnel; copies up to `cap` body bytes into `out`.
+// Returns body bytes read, -1 if the connection failed.
+static int http_get(uint32_t ip, const char *path, uint8_t *out, size_t cap) {
+    microlink_tcp_socket_t *sock = microlink_tcp_connect(ml, ip, COMACK_SERVER_PORT, 10000);
+    if (!sock) return -1;
 
-    // Read HTTP response headers then raw 48,000 bytes
-    char header_buf[1024];
-    size_t total_body = 0;
-    bool in_body = false;
+    char req[160];
+    int n = snprintf(req, sizeof(req), "GET %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
+                     path, COMACK_SERVER_HOST, COMACK_SERVER_PORT);
+    microlink_tcp_send(sock, req, n);
 
-    while (total_body < EPD_BUFFER_BYTES) {
-        uint8_t chunk[2048];
+    size_t body = 0;
+    int sep = 0; // bytes of "\r\n\r\n" matched so far; 4 = inside body
+    while (body < cap) {
+        uint8_t chunk[1024];
         int r = microlink_tcp_recv(sock, chunk, sizeof(chunk), 5000);
         if (r <= 0) break;
-
-        if (!in_body) {
-            // Find \r\n\r\n separator
-            for (int i = 0; i < r - 3; i++) {
-                if (chunk[i] == '\r' && chunk[i+1] == '\n' && chunk[i+2] == '\r' && chunk[i+3] == '\n') {
-                    in_body = true;
-                    int body_start = i + 4;
-                    int body_bytes = r - body_start;
-                    if (body_bytes > 0) {
-                        memcpy(epdFrameBuffer, chunk + body_start, body_bytes);
-                        total_body += body_bytes;
-                    }
-                    break;
-                }
-            }
-        } else {
-            size_t to_copy = (total_body + r > EPD_BUFFER_BYTES) ? (EPD_BUFFER_BYTES - total_body) : r;
-            memcpy(epdFrameBuffer + total_body, chunk, to_copy);
-            total_body += to_copy;
+        int i = 0;
+        for (; sep < 4 && i < r; i++) {
+            sep = (chunk[i] == "\r\n\r\n"[sep]) ? sep + 1 : (chunk[i] == '\r' ? 1 : 0);
         }
+        size_t take = ((size_t)(r - i) > cap - body) ? cap - body : (size_t)(r - i);
+        memcpy(out + body, chunk + i, take);
+        body += take;
     }
-
     microlink_tcp_close(sock);
+    return (int)body;
+}
 
-    if (total_body == EPD_BUFFER_BYTES) {
-        ESP_LOGI(TAG, "Complete comic binary received (%d bytes). Updating e-Paper!", (int)total_body);
-        epd.displayFrame(epdFrameBuffer);
-    } else {
-        ESP_LOGW(TAG, "Incomplete comic binary received: %d / %d bytes", (int)total_body, EPD_BUFFER_BYTES);
+static bool download_and_refresh_comic(uint32_t ip, int issue) {
+    char path[40];
+    snprintf(path, sizeof(path), "/api/comics/%d/bin", issue);
+    ESP_LOGI(TAG, "Fetching comic #%d from %s...", issue, COMACK_SERVER_HOST);
+    int got = http_get(ip, path, epdFrameBuffer, EPD_BUFFER_BYTES);
+    if (got != EPD_BUFFER_BYTES) {
+        ESP_LOGW(TAG, "Incomplete comic binary: %d / %d bytes", got, EPD_BUFFER_BYTES);
+        return false;
     }
+    uint32_t black = 0;
+    for (int i = 0; i < EPD_BUFFER_BYTES; i++) black += __builtin_popcount((uint8_t)~epdFrameBuffer[i]);
+    ESP_LOGI(TAG, "Comic binary received (%u/%d black pixels, first bytes %02x %02x %02x %02x). Updating e-Paper!",
+             (unsigned)black, EPD_WIDTH * EPD_HEIGHT, epdFrameBuffer[0], epdFrameBuffer[1], epdFrameBuffer[2], epdFrameBuffer[3]);
+    epd.displayFrame(epdFrameBuffer);
+    return true;
 }
 
 static void audio_streaming_task(void *pvParameters) {
-    uint32_t dest_ip = microlink_parse_ip(COMACK_SERVER_HOST);
     ESP_LOGI(TAG, "Audio streaming task running on Core 0.");
+    microlink_tcp_socket_t *ws = NULL;
+    uint32_t chunks = 0;
+    int16_t peak = 0;
 
     while (true) {
         xEventGroupWaitBits(app_event_group, TAILSCALE_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
-        // Sample audio from onboard PDM microphone
+        if (!ws) {
+            uint32_t ip = resolve_server();
+            if (ip) ws = ws_connect(ml, ip, COMACK_SERVER_PORT, COMACK_SERVER_HOST, "/ws/audio");
+            if (!ws) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            }
+            ESP_LOGI(TAG, "Audio WebSocket connected.");
+        }
+
+        // Sample audio from onboard PDM microphone and stream it to the server
         size_t samples = mic.readSamples(audioChunkBuffer, AUDIO_CHUNK_SAMPLES);
         if (samples > 0) {
-            // Audio streaming over Tailscale TCP socket
-            microlink_tcp_socket_t *audio_sock = microlink_tcp_connect(ml, dest_ip, COMACK_SERVER_PORT, 2000);
-            if (audio_sock) {
-                microlink_tcp_send(audio_sock, audioChunkBuffer, samples * sizeof(int16_t));
-                microlink_tcp_close(audio_sock);
+            for (size_t i = 0; i < samples; i++) {
+                int16_t a = audioChunkBuffer[i] < 0 ? -audioChunkBuffer[i] : audioChunkBuffer[i];
+                if (a > peak) peak = a;
+            }
+            if (!ws_send_binary(ws, audioChunkBuffer, samples * sizeof(int16_t))) {
+                ESP_LOGW(TAG, "Audio WebSocket dropped; reconnecting.");
+                microlink_tcp_close(ws);
+                ws = NULL;
+            } else if (++chunks % 50 == 0) { // ~5s
+                ESP_LOGI(TAG, "Audio: %u chunks sent, peak=%d", (unsigned)chunks, peak);
+                peak = 0;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -272,12 +290,29 @@ extern "C" void app_main(void) {
 
     // 8. Main event loop on Core 1: wait for Tailscale then manage refreshes
     xEventGroupWaitBits(app_event_group, TAILSCALE_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
-    uint32_t comack-server_ip = microlink_parse_ip(COMACK_SERVER_HOST);
+    uint32_t comack-server_ip = 0;
+    while (!(comack-server_ip = resolve_server())) {
+        ESP_LOGW(TAG, "Resolving '%s' via Tailscale MagicDNS...", COMACK_SERVER_HOST);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    char resolved_ip_str[16];
+    microlink_ip_to_str(comack-server_ip, resolved_ip_str);
+    ESP_LOGI(TAG, "MagicDNS resolved '%s' -> %s", COMACK_SERVER_HOST, resolved_ip_str);
 
-    // Initial comic display load
-    download_and_refresh_comic(comack-server_ip);
-
+    // Poll for a newly revealed comic; the server only bumps "current" after the silence gate opens.
+    // ponytail: 10s polling, not a /ws/events subscription. Add the socket if latency matters.
+    int shown_issue = -1;
     while (true) {
+        uint8_t buf[256];
+        int n = http_get(comack-server_ip, "/api/comics/current", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = 0;
+            const char *p = strstr((const char *)buf, "\"issue_number\":");
+            int issue = p ? atoi(p + strlen("\"issue_number\":")) : -1;
+            if (issue > 0 && issue != shown_issue && download_and_refresh_comic(comack-server_ip, issue)) {
+                shown_issue = issue;
+            }
+        }
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }

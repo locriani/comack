@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <driver/i2s_pdm.h>
 #include "config.h"
 
 class MicSampler {
@@ -12,4 +13,5 @@ public:
 
 private:
     bool _initialized;
+    i2s_chan_handle_t _rx_chan;
 };
