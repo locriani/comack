@@ -232,7 +232,7 @@
     function handleEvent(data) {
       if (data.event === 'INIT_SNAPSHOT') {
         updateSneakyStatus(data.sneaky_status);
-        if (data.active_arc) updateArc(data.active_arc);
+        updateArc(data.active_arc);
         if (data.current_comic) updateComic(data.current_comic);
       } else if (data.event === 'SNEAKY_COMIC_REFRESH') {
         refreshComicImage(data);
@@ -275,6 +275,14 @@
     }
 
     function updateArc(arc) {
+      if (!arc) {   // the last arc concluded; the next comic seeds a new one
+        document.getElementById('arcTitle').innerText = 'Generating next arc';
+        document.getElementById('arcGenre').innerText = '--';
+        document.getElementById('arcPremise').innerText = 'A new story starts with the next comic.';
+        document.getElementById('arcDurationText').innerText = '--';
+        document.getElementById('arcProgressBar').style.width = '0%';
+        return;
+      }
       document.getElementById('arcTitle').innerText = arc.title;
       document.getElementById('arcGenre').innerText = arc.genre;
       document.getElementById('arcPremise').innerText = `"${arc.premise}"`;
@@ -438,7 +446,7 @@
         const res = await fetch('/api/status');
         const data = await res.json();
         updateSneakyStatus(data.sneaky);
-        if (data.active_arc) updateArc(data.active_arc);
+        updateArc(data.active_arc);
       } catch (e) {}
     }, 1000);
 
