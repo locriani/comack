@@ -86,7 +86,8 @@ def _wait_for_vram(min_free_gb: float, timeout_s: float) -> bool:
     import torch
     deadline = time.time() + timeout_s
     while True:
-        free_gb = torch.cuda.mem_get_info()[0] / 1e9
+        # Our own cached blocks are reusable, so they count as free.
+        free_gb = (torch.cuda.mem_get_info()[0] + torch.cuda.memory_reserved()) / 1e9
         if free_gb >= min_free_gb:
             return True
         if time.time() >= deadline:
@@ -193,6 +194,9 @@ class FluxGenerator:
             return gray_img.resize((width, height), Image.Resampling.LANCZOS)
         except Exception as e:
             logger.error(f"Error during panel generation: {e}")
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()  # an OOM leaves its half-built tensors cached
             return None
 
     def _generate_via_api(self, prompt: str, target_size: Tuple[int, int]) -> Optional[Image.Image]:
