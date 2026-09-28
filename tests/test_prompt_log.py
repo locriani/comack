@@ -20,6 +20,14 @@ def test_a_failed_call_is_logged_and_returns_none():
     assert llm.prompt_log[-1]["output"].startswith("error:")
 
 
+def test_no_llm_url_means_no_call():
+    with patch.object(llm.settings, "LLM_URL", ""), \
+         patch.object(httpx.AsyncClient, "post", AsyncMock()) as post:
+        assert asyncio.run(llm.complete_json("sys", "hello")) is None
+    post.assert_not_called()
+    assert llm.prompt_log[-1]["output"] == "error: LLM_URL is not set"
+
+
 def test_entries_expire_after_15_minutes():
     llm.prompt_log.clear()
     now = time.time()

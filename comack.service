@@ -10,7 +10,7 @@ ExecStart=/home/comack-server/comack/.venv/bin/uvicorn server.main:app --host 0.
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-Environment=LLAMA_CPP_URL=http://comack-server.example-tailnet.ts.net:80/
+Environment=LLM_URL=http://comack-server.example-tailnet.ts.net:80/
 Environment=FLUX_MODEL_ID=black-forest-labs/FLUX.1-schnell
 Environment=SNEAKY_SILENCE_SECONDS=50.0
 # Models are already cached; skip the per-load huggingface.co revision check.

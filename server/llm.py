@@ -1,5 +1,5 @@
 """
-The llama.cpp client (OpenAI-compatible /v1 endpoint on comack-server) and the in-memory log of
+The LLM client (any OpenAI-compatible /v1 endpoint, at LLM_URL) and the in-memory log of
 every model call that the dashboard's debug view shows.
 """
 import json
@@ -35,10 +35,10 @@ def log_call(model: str, system: str, prompt: str) -> Dict[str, Any]:
 async def complete_json(system_prompt: str, user_prompt: str, base_url: str = "") -> Optional[Dict[str, Any]]:
     """One chat completion asking for JSON (default: the main model). None when the call fails
     or the reply isn't JSON; callers treat that as "no output", never as a reason to fall back."""
-    base = (base_url or settings.LLAMA_CPP_URL).rstrip('/')
+    base = (base_url or settings.LLM_URL).rstrip('/')
     url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
     payload = {
-        "model": settings.LLAMA_CPP_MODEL or "default",
+        "model": settings.LLM_MODEL or "default",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -47,14 +47,18 @@ async def complete_json(system_prompt: str, user_prompt: str, base_url: str = ""
         "response_format": {"type": "json_object"}
     }
     entry = log_call(url, system_prompt, user_prompt)
+    if not base:
+        entry["output"] = "error: LLM_URL is not set"
+        logger.warning("LLM_URL is not set; skipping the LLM call")
+        return None
     try:
         # Reasoning model with thinking on: generation can take minutes.
         async with httpx.AsyncClient(timeout=600.0) as client:
-            logger.info(f"Sending prompt to llama.cpp at {url}")
+            logger.info(f"Sending prompt to the LLM at {url}")
             resp = await client.post(url, json=payload)
         if resp.status_code != 200:
             entry["output"] = f"HTTP {resp.status_code}: {resp.text}"
-            logger.warning(f"llama.cpp returned status {resp.status_code}: {resp.text[:200]}")
+            logger.warning(f"LLM returned status {resp.status_code}: {resp.text[:200]}")
             return None
         content = entry["output"] = resp.json()["choices"][0]["message"]["content"]
         # Extract JSON block if wrapped in markdown
@@ -65,5 +69,5 @@ async def complete_json(system_prompt: str, user_prompt: str, base_url: str = ""
         return json.loads(content)
     except Exception as e:
         entry["output"] = entry["output"] or f"error: {e!r}"
-        logger.warning(f"Failed to query llama.cpp at {url}: {e}")
+        logger.warning(f"Failed to query the LLM at {url}: {e}")
         return None

@@ -1,6 +1,6 @@
 """
 Story Lorekeeper & Narrative Continuity Engine.
-Connects to llama.cpp (OpenAI-compatible /v1 endpoint) on comack-server.
+Writes with the LLM (server.llm, at LLM_URL).
 Maintains story arcs with dynamic lifespans (4 hours to 7 days),
 incorporates scrambled overheard dialogue into comic scripts,
 and picks a page layout (comic_compositor.LAYOUTS) to suit each scene.
@@ -97,7 +97,7 @@ class NarrativeEngine:
 
     async def generate_comic_script(self, transcript_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Generate the next comic strip script using llama.cpp.
+        Generate the next comic strip script using the LLM.
         Takes dialogue collected during speech periods and maintains continuity.
         """
         arc = await self.get_or_create_active_arc()

@@ -30,11 +30,11 @@ class Settings(BaseModel):
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
     
-    # llama.cpp server configuration
-    LLAMA_CPP_URL: str = os.getenv("LLAMA_CPP_URL", "http://comack-server.example-tailnet.ts.net:80/")
-    LLAMA_CPP_MODEL: str = os.getenv("LLAMA_CPP_MODEL", "")
-    # Small, fast model for the per-sentence miner pass (empty = use LLAMA_CPP_URL)
-    MINER_LLAMA_URL: str = os.getenv("MINER_LLAMA_URL", "")
+    # OpenAI-compatible LLM server (llama.cpp, vLLM, Ollama...), e.g. http://host:80/
+    LLM_URL: str = os.getenv("LLM_URL", "")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "")
+    # Small, fast model for the per-sentence miner pass (empty = use LLM_URL)
+    MINER_LLM_URL: str = os.getenv("MINER_LLM_URL", "")
     
     # Whisper Speech-to-Text configuration
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "base.en")
@@ -82,9 +82,6 @@ class Settings(BaseModel):
     # E-paper display specs
     DISPLAY_WIDTH: int = 800
     DISPLAY_HEIGHT: int = 480
-    
-    # Optional OpenRouter fallback if configured
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 
 
 settings = Settings()

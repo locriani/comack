@@ -9,7 +9,7 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8000
-      - LLAMA_CPP_URL=http://127.0.0.1:80/v1
+      - LLM_URL=http://127.0.0.1:80/v1
       - SNEAKY_SILENCE_SECONDS=50.0
       - COMIC_CYCLE_MINUTES=30
       - POS_SCRAMBLE_RATE=0.25

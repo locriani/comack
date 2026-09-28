@@ -9,8 +9,8 @@ echo "=========================================="
 echo " Deploying Comack to $DEST_HOST:$DEST_DIR "
 echo "=========================================="
 
-# Rsync project files excluding venv and git
-rsync -avz --exclude '.venv' --exclude '.venv_pio' --exclude '.git' --exclude 'firmware' --exclude 'simulator/__pycache__' --exclude '__pycache__' --exclude 'data/' \
+# Rsync project files excluding venv, git, and the server's own .env
+rsync -avz --exclude '.env' --exclude '.venv'--exclude '.venv_pio' --exclude '.git' --exclude 'firmware' --exclude 'simulator/__pycache__' --exclude '__pycache__' --exclude 'data/' \
     ./ "$DEST_HOST:$DEST_DIR"
 
 echo "Sync complete."

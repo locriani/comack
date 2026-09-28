@@ -86,7 +86,7 @@ async def _llm_pass(header: str, task: str, inputs: List[str]) -> List[dict]:
 
 {task}
 Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}}"""
-    result = await llm.complete_json(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
+    result = await llm.complete_json(SYSTEM_PROMPT, prompt, settings.MINER_LLM_URL)
     items = (result or {}).get("sentences") or []
     kept = [i for i in items if isinstance(i, dict) and _content(i)]
     if not kept or len(kept) < len(items):

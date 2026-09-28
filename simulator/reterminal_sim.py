@@ -22,9 +22,6 @@ try:
 except ImportError:
     websockets = None
 
-SERVER_HOST = "localhost"
-SERVER_PORT = 8000
-
 
 def generate_audio_chunk(sample_rate: int = 16000, duration: float = 0.1, is_speech: bool = False) -> bytes:
     """Generate 100ms of 16-bit signed PCM audio."""
@@ -115,7 +112,7 @@ def run_gui_simulator(server_host: str, server_port: int):
     canvas = tk.Label(frame, bg="#ffffff", width=800, height=480)
     canvas.pack()
     
-    status_label = tk.Label(root, text="Status: Connected | Listening to Comack on comack-server", 
+    status_label = tk.Label(root, text=f"Status: Connected | Listening to Comack on {server_host}:{server_port}",
                             bg="#22252e", fg="#9ca3af", font=("Courier", 11))
     status_label.pack(pady=4)
     
