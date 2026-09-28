@@ -6,11 +6,20 @@
 
 // ==========================================
 // Network & Comack Server Configuration
-// Wi-Fi Configuration (Primary + Fallback)
-#define WIFI_SSID_1         "Example-WiFi-1"
-#define WIFI_PASS_1         "REDACTED_WIFI_PASS"
-#define WIFI_SSID_2         "Example-WiFi-2"
-#define WIFI_PASS_2         "REDACTED_WIFI_PASS"
+// Wi-Fi Configuration Rotation (Primary + Fallbacks)
+// ==========================================
+typedef struct {
+    const char *ssid;
+    const char *pass;
+} wifi_cred_t;
+
+static const wifi_cred_t WIFI_NETWORKS[] = {
+    { "Example-WiFi-1",    "REDACTED_WIFI_PASS" },
+    { "Example-WiFi-2",       "REDACTED_WIFI_PASS" },
+    { "Example-WiFi-3",    "REDACTED_WIFI_PASS" },
+    { "Example-WiFi-4",        "REDACTED_WIFI_PASS" }
+};
+static const int WIFI_NETWORK_COUNT = sizeof(WIFI_NETWORKS) / sizeof(WIFI_NETWORKS[0]);
 
 // Deskserver Host Configuration (Tailscale IP)
 #define COMACK_SERVER_HOST  "100.64.0.1"

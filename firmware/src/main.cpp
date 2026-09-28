@@ -34,16 +34,8 @@ static EventGroupHandle_t app_event_group;
 #define WIFI_CONNECTED_BIT      BIT0
 #define TAILSCALE_CONNECTED_BIT BIT1
 
-// Wi-Fi credentials list for fallback
-static const struct {
-    const char *ssid;
-    const char *pass;
-} wifi_networks[] = {
-    { WIFI_SSID_1, WIFI_PASS_1 },
-    { WIFI_SSID_2, WIFI_PASS_2 }
-};
+// Wi-Fi rotation state
 static int current_wifi_idx = 0;
-static const int wifi_network_count = sizeof(wifi_networks) / sizeof(wifi_networks[0]);
 
 /* ============================================================================
  * Tailscale Callbacks
@@ -84,17 +76,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG, "Wi-Fi disconnected. Trying next available network...");
-        current_wifi_idx = (current_wifi_idx + 1) % wifi_network_count;
+        ESP_LOGW(TAG, "Wi-Fi disconnected. Rotating to next network...");
+        current_wifi_idx = (current_wifi_idx + 1) % WIFI_NETWORK_COUNT;
         wifi_config_t wifi_cfg = {};
-        strncpy((char *)wifi_cfg.sta.ssid, wifi_networks[current_wifi_idx].ssid, sizeof(wifi_cfg.sta.ssid) - 1);
-        strncpy((char *)wifi_cfg.sta.password, wifi_networks[current_wifi_idx].pass, sizeof(wifi_cfg.sta.password) - 1);
+        strncpy((char *)wifi_cfg.sta.ssid, WIFI_NETWORKS[current_wifi_idx].ssid, sizeof(wifi_cfg.sta.ssid) - 1);
+        strncpy((char *)wifi_cfg.sta.password, WIFI_NETWORKS[current_wifi_idx].pass, sizeof(wifi_cfg.sta.password) - 1);
         esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Wi-Fi connected to '%s'! Local IP: " IPSTR,
-                 wifi_networks[current_wifi_idx].ssid,
+                 WIFI_NETWORKS[current_wifi_idx].ssid,
                  IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(app_event_group, WIFI_CONNECTED_BIT);
     }
@@ -112,15 +104,15 @@ static void wifi_init(void) {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
 
     wifi_config_t wifi_cfg = {};
-    strncpy((char *)wifi_cfg.sta.ssid, wifi_networks[0].ssid, sizeof(wifi_cfg.sta.ssid) - 1);
-    strncpy((char *)wifi_cfg.sta.password, wifi_networks[0].pass, sizeof(wifi_cfg.sta.password) - 1);
+    strncpy((char *)wifi_cfg.sta.ssid, WIFI_NETWORKS[0].ssid, sizeof(wifi_cfg.sta.ssid) - 1);
+    strncpy((char *)wifi_cfg.sta.password, WIFI_NETWORKS[0].pass, sizeof(wifi_cfg.sta.password) - 1);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE)); // Low latency for WireGuard
 
-    ESP_LOGI(TAG, "Searching for Wi-Fi network: %s...", wifi_networks[0].ssid);
+    ESP_LOGI(TAG, "Searching for Wi-Fi network: %s...", WIFI_NETWORKS[0].ssid);
 }
 
 /* ============================================================================
