@@ -48,7 +48,6 @@ def arc_bible_prompt(past_arcs: List[Dict[str, Any]]) -> str:
 
 Invent a completely new comic series. Draw from the whole range of comics and storytelling:
 any genre, era, audience, and kind of humor or drama.
-It is drawn in black and white on a 1-bit e-ink screen, so pick an art style that survives that.
 Output: {{"title": "the series title", "genre": "a few words", "premise": "one or two sentences",
 "tone": "how the story is told: voice, kind of humor or drama, how the characters behave",
 "art_style": "the visual style, as a phrase an image model understands",
@@ -132,7 +131,7 @@ class NarrativeEngine:
 
         meta = json.loads(arc.get("metadata_json") or "{}")
         tone = meta.get("tone") or "whatever best fits the genre"
-        art_style = meta.get("art_style") or "bold black-and-white ink"
+        art_style = meta.get("art_style") or "whatever best fits the genre"
         cast = "\nCast:" + "".join(f"\n- {c}" for c in meta["cast"]) if meta.get("cast") else ""
 
         system_prompt = (
@@ -159,9 +158,7 @@ TASK:
 1. Plan the story beats this issue needs, then choose the page layout whose shape serves them
    (pacing, number of beats, energy). Write exactly as many panels as the layout has:
 {LAYOUT_MENU}
-2. Write each scene_description as an image prompt in the series' art style, adapted to a 1-bit black-and-white e-ink display:
-   - Bold silhouettes, strong foreground/background contrast, solid blacks and clean whites.
-   - No subtle color nuances, haze, or smooth gray gradients: they dither into muddy noise.
+2. Write each scene_description as an image prompt in the series' art style.
 3. Decide how many room notes to collect before the next issue ("lines_wanted_next", 1-30):
    fewer for a fast, punchy beat; more to let the next issue build from a richer stretch of the room.
 4. Output STRICT JSON in this exact structure:

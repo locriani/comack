@@ -124,7 +124,7 @@ class FluxGenerator:
     def generate_panel_art(self, scene_description: str, target_size: Tuple[int, int],
                            genre: str = "Graphic Novel") -> Optional[Image.Image]:
         """
-        Generate black-and-white comic panel artwork.
+        Generate comic panel artwork (grayscale out; the compositor dithers it).
         :param scene_description: Visual description from the story engine
         :param target_size: (width, height) in pixels
         :param genre: Comic genre context
@@ -185,9 +185,8 @@ class FluxGenerator:
             steps = settings.FLUX_INFERENCE_STEPS
             guidance = settings.FLUX_GUIDANCE_SCALE
         
-        # Short 1-bit prefix first: SD-Turbo's CLIP reads only 77 tokens (FLUX's T5 reads 512).
-        # The art style itself comes from the arc, via the scene description.
-        prompt = f"black and white comic panel, high contrast, solid blacks, no gray: {scene_description}"
+        # The art style comes from the arc, via the scene description; halftoning happens after.
+        prompt = f"comic panel: {scene_description}"
         
         logger.info(f"Generating panel with {settings.FLUX_MODEL_ID} ({gen_w}x{gen_h}, {steps} steps)...")
         kwargs = {
