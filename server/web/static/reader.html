@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comack Reader</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Space+Mono:wght@400;700&display=swap">
+  <style>
+    :root { --bg: #0f1117; --card: #161922; --line: #2a2f3d; --text: #e2e8f0; --dim: #8b93a7; --accent: #818cf8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Space Grotesk', sans-serif; }
+    .mono { font-family: 'Space Mono', monospace; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+             padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+    header a { color: var(--dim); text-decoration: none; font-size: 12px; }
+    header a:hover { color: var(--accent); }
+    main { max-width: 900px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    select, button { font: inherit; font-size: 13px; color: var(--text); background: var(--card);
+                     border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+    select { max-width: 100%; }
+    button:hover:not(:disabled), select:hover { border-color: var(--accent); }
+    button:disabled { opacity: .35; cursor: default; }
+    .arc h2 { margin: 0; font-size: 20px; }
+    .arc p { margin: 4px 0 0; color: var(--dim); font-size: 13px; }
+    .page { background: #e2e4e9; border-radius: 10px; padding: 10px; }
+    .page img { display: block; width: 100%; height: auto; aspect-ratio: 800 / 480; background: #fff; border-radius: 4px;
+                image-rendering: pixelated; }
+    .nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .nav .group { display: flex; gap: 6px; }
+    .issue { font-size: 13px; color: var(--dim); text-align: center; flex: 1; min-width: 160px; }
+    .issue b { color: var(--text); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chips button { font-size: 12px; padding: 4px 8px; }
+    .chips button.on { border-color: var(--accent); color: var(--accent); }
+    .empty { color: var(--dim); text-align: center; padding: 48px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong class="mono">COMACK READER</strong>
+    <select id="arcSelect" aria-label="Story arc"></select>
+    <a href="/" class="mono">← Dashboard</a>
+  </header>
+
+  <main>
+    <div id="empty" class="empty" hidden>No issues yet.</div>
+    <div id="reader" hidden>
+      <div class="arc" style="margin-bottom:12px">
+        <h2 id="arcTitle"></h2>
+        <p id="arcMeta"></p>
+      </div>
+      <div class="page"><img id="page" alt=""></div>
+      <div class="nav" style="margin-top:12px">
+        <div class="group">
+          <button id="prevArc" title="Previous arc">« Arc</button>
+          <button id="prev" title="Previous issue (←)">‹ Prev</button>
+        </div>
+        <div class="issue mono" id="issueLabel"></div>
+        <div class="group">
+          <button id="next" title="Next issue (→)">Next ›</button>
+          <button id="nextArc" title="Next arc">Arc »</button>
+        </div>
+      </div>
+      <div class="chips" id="chips" style="margin-top:12px"></div>
+    </div>
+  </main>
+
+  <script>
+    let arcs = [], issues = [], at = 0;
+    const $ = id => document.getElementById(id);
+
+    async function load() {
+      arcs = (await (await fetch('/api/arcs')).json()).filter(a => a.comics.length);
+      issues = arcs.flatMap(arc => arc.comics.map(c => ({ ...c, arc })));
+      if (!issues.length) { $('empty').hidden = false; return; }
+      $('reader').hidden = false;
+      $('arcSelect').replaceChildren(...arcs.map(a => new Option(`${a.title} (${a.comics.length})`, a.id)));
+      const want = parseInt(location.hash.slice(1));
+      const k = issues.findIndex(c => c.issue_number === want);
+      show(k >= 0 ? k : issues.length - 1);
+    }
+
+    function show(k) {
+      at = Math.max(0, Math.min(issues.length - 1, k));
+      const c = issues[at], arc = c.arc;
+      $('page').src = `/api/comics/${c.issue_number}/png`;
+      $('page').alt = c.title;
+      $('arcTitle').textContent = arc.title;
+      $('arcMeta').textContent = `${arc.genre} · ${arc.status.toLowerCase()} · ${arc.premise}`;
+      $('issueLabel').replaceChildren(
+        Object.assign(document.createElement('b'), { textContent: `#${String(c.issue_number).padStart(3, '0')} ${c.title}` }),
+        document.createElement('br'),
+        `${c.layout_type} · ${new Date(c.created_at * 1000).toLocaleString()}${c.status === 'STEALTH_HOLD' ? ' · held' : ''}`);
+      $('arcSelect').value = arc.id;
+      $('prev').disabled = at === 0;
+      $('next').disabled = at === issues.length - 1;
+      $('prevArc').disabled = arc === arcs[0];
+      $('nextArc').disabled = arc === arcs[arcs.length - 1];
+      $('chips').replaceChildren(...arc.comics.map(ac => {
+        const b = document.createElement('button');
+        b.textContent = `#${ac.issue_number}`;
+        b.title = ac.title;
+        b.className = ac.issue_number === c.issue_number ? 'on' : '';
+        b.onclick = () => show(issues.findIndex(x => x.issue_number === ac.issue_number));
+        return b;
+      }));
+      history.replaceState(null, '', `#${c.issue_number}`);
+    }
+
+    // Jump to the first issue of an arc
+    const toArc = arc => show(issues.findIndex(c => c.arc === arc));
+    const arcStep = d => toArc(arcs[arcs.indexOf(issues[at].arc) + d]);
+
+    $('prev').onclick = () => show(at - 1);
+    $('next').onclick = () => show(at + 1);
+    $('prevArc').onclick = () => arcStep(-1);
+    $('nextArc').onclick = () => arcStep(1);
+    $('arcSelect').onchange = e => toArc(arcs.find(a => a.id == e.target.value));
+    document.addEventListener('keydown', e => {
+      if (e.target.tagName === 'SELECT') return;
+      if (e.key === 'ArrowLeft') show(at - 1);
+      else if (e.key === 'ArrowRight') show(at + 1);
+      else if (e.key === 'Home') show(0);
+      else if (e.key === 'End') show(issues.length - 1);
+    });
+    load();
+  </script>
+</body>
+</html>

@@ -90,10 +90,9 @@ class Database:
         return dict(row) if row else None
 
     def create_arc(self, title: str, genre: str, premise: str, target_panels: int, metadata: Dict[str, Any] = None) -> int:
+        self.conclude_arc()  # any previous active arc
         conn = get_connection()
         cursor = conn.cursor()
-        # Mark any previous active arcs as CONCLUDED
-        cursor.execute("UPDATE story_arcs SET status = 'CONCLUDED' WHERE status = 'ACTIVE'")
         cursor.execute("""
             INSERT INTO story_arcs (title, genre, premise, started_at, target_panels, status, metadata_json)
             VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?)
@@ -110,10 +109,25 @@ class Database:
         conn.commit()
         conn.close()
 
-    def conclude_arc(self, arc_id: int):
+    def rename_arc(self, arc_id: int, title: str):
+        """Set the LLM-given title and mark the arc named."""
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE story_arcs SET status = 'CONCLUDED' WHERE id = ?", (arc_id,))
+        conn.execute("UPDATE story_arcs SET title = ?, metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.named', 1) "
+                     "WHERE id = ?", (title, arc_id))
+        conn.commit()
+        conn.close()
+
+    def conclude_arc(self, arc_id: Optional[int] = None):
+        """Conclude an arc (default: every active one) and wipe the room lines it used:
+        the transcript rows and each comic's copy in its script."""
+        where, params = ("id = ?", (arc_id,)) if arc_id is not None else ("status = 'ACTIVE'", ())
+        arcs = f"SELECT id FROM story_arcs WHERE {where}"
+        conn = get_connection()
+        conn.execute(f"DELETE FROM transcripts WHERE used_in_comic_id IN "
+                     f"(SELECT id FROM comics WHERE arc_id IN ({arcs}))", params)
+        conn.execute(f"UPDATE comics SET script_json = json_remove(script_json, '$.dialogue_used') "
+                     f"WHERE arc_id IN ({arcs})", params)
+        conn.execute(f"UPDATE story_arcs SET status = 'CONCLUDED' WHERE {where}", params)
         conn.commit()
         conn.close()
 
@@ -218,6 +232,18 @@ class Database:
         rows = cursor.fetchall()
         conn.close()
         return [dict(r) for r in rows]
+
+    def get_arcs(self) -> List[Dict[str, Any]]:
+        """Every arc, oldest first, each with its issues (no scripts) for the reader."""
+        conn = get_connection()
+        arcs = [dict(r) for r in conn.execute(
+            "SELECT id, title, genre, premise, status FROM story_arcs ORDER BY id")]
+        for arc in arcs:
+            arc["comics"] = [dict(r) for r in conn.execute(
+                "SELECT issue_number, title, layout_type, status, created_at FROM comics "
+                "WHERE arc_id = ? ORDER BY issue_number", (arc["id"],))]
+        conn.close()
+        return arcs
 
     def get_arc_comics(self, arc_id: int) -> List[Dict[str, Any]]:
         conn = get_connection()

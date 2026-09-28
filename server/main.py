@@ -249,6 +249,11 @@ async def index():
     return HTMLResponse("<h1>Comack is running</h1><p>Static UI not yet written.</p>")
 
 
+@app.get("/reader", response_class=HTMLResponse)
+async def reader():
+    return FileResponse(STATIC_DIR / "reader.html")
+
+
 # --- WebSocket Endpoints ---
 
 @app.websocket("/ws/audio")
@@ -368,6 +373,11 @@ async def get_current_comic_bin():
 @app.get("/api/comics/history")
 async def get_comic_history(limit: int = 20):
     return db.get_recent_comics(limit=limit)
+
+
+@app.get("/api/arcs")
+async def get_arcs():
+    return db.get_arcs()
 
 
 @app.get("/api/comics/{issue_number}/png")

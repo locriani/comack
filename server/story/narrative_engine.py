@@ -13,7 +13,6 @@ import httpx
 from typing import Dict, Any, List, Optional
 from server.config import settings
 from server.storage import db
-from server.privacy.pos_scrambler import pools
 from server.render.comic_compositor import LAYOUTS, resolve_layout
 
 logger = logging.getLogger("comack.story")
@@ -125,7 +124,7 @@ class NarrativeEngine:
         target_panels = random.randint(settings.ARC_MIN_PANELS, settings.ARC_MAX_PANELS)
         genre = random.choice(ARC_GENRES)
         premise = random.choice(PREMISE_SEEDS)
-        title = f"The {random.choice(pools()['JJ']).title()} {random.choice(pools()['NN']).title()}"
+        title = genre  # placeholder until the LLM names the arc in its first script
 
         arc_id = db.create_arc(
             title=title,
@@ -167,8 +166,12 @@ class NarrativeEngine:
             "You must output ONLY valid, parseable JSON conforming strictly to the requested schema."
         )
         
+        needs_name = not json.loads(arc.get("metadata_json") or "{}").get("named")
+        name_task = ('\n5. This arc has no title yet. Name it in "arc_title": a punchy, deadpan series title '
+                     'that fits the genre and premise.') if needs_name else ""
+
         prompt_content = f"""
-Current Narrative Arc #{arc['id']}: '{arc['title']}'
+Current Narrative Arc #{arc['id']}: {"(untitled)" if needs_name else repr(arc['title'])}
 Genre: {arc['genre']}
 Arc Premise: {arc['premise']}
 Arc Progress: {arc_progress * 100:.1f}% ({panels_used} of {arc['target_panels']} panels drawn)
@@ -187,7 +190,7 @@ TASK:
    - Avoid subtle color nuances, smoky haze, or smooth gray gradients that turn into muddy noise when dithered to 1-bit.
 3. Decide how many room notes to collect before the next issue ("lines_wanted_next", 1-30):
    fewer for a fast, punchy beat; more to let the next issue build from a richer stretch of the room.
-4. Output STRICT JSON in this exact structure:
+4. Output STRICT JSON in this exact structure{' (plus "arc_title")' if needs_name else ''}:
 {{
   "title": "A witty, deadpan issue title",
   "layout_type": "one of the layout names above",
@@ -204,7 +207,7 @@ TASK:
   ],
   "lines_wanted_next": 8,
   "arc_status": "CONTINUE"
-}}
+}}{name_task}
 """
 
         script = await self._call_llama_cpp(system_prompt, prompt_content)
@@ -213,11 +216,17 @@ TASK:
         if not script or "panels" not in script:
             script = self._create_fallback_script(issue_number, arc, mined_elements)
 
+        arc_title = arc["title"]
+        if needs_name and str(script.get("arc_title") or "").strip():
+            arc_title = str(script["arc_title"]).strip()
+            db.rename_arc(arc["id"], arc_title)
+
         layout = resolve_layout(script.get("layout_type", ""), len(script["panels"]))
         panels = script["panels"][:len(LAYOUTS[layout][1])]
         return {
             "issue_number": issue_number,
             "arc_id": arc["id"],
+            "arc_title": arc_title,
             "title": script.get("title", f"Episode #{issue_number}"),
             "layout_type": layout,
             "panel_count": len(panels),

@@ -1,12 +1,13 @@
 """
 Story element miner.
-[audio] -> [transcribe] -> [10% swap + digit swap] -> HERE: [LLM content per sentence] -> stored.
-The scrambled transcript itself is never stored; only these generated lines are.
+[audio] -> [transcribe] -> [10% swap + digit swap] -> HERE: [LLM content per sentence] -> [10% swap] -> stored.
+The scrambled transcript itself is never stored; only these generated, re-scrambled lines are.
 """
 import re
 import logging
 from typing import List
 from server.config import settings
+from server.privacy.pos_scrambler import scramble_text
 
 logger = logging.getLogger("comack.miner")
 
@@ -25,11 +26,12 @@ def split_sentences(text: str) -> List[str]:
 
 
 def format_row(item: dict) -> str:
-    """`[VIBE • ENERGY] content`"""
+    """`[VIBE • ENERGY] content`, with the content re-scrambled."""
     vibe = " ".join(str(item.get("vibe") or "deadpan").split()[:3]).upper()
     energy = str(item.get("energy", "")).lower()
     energy = energy if energy in ENERGIES else "medium"
-    return f"[{vibe} • {energy.upper()}] {item.get('content') or ''}"
+    content = scramble_text(str(item.get("content") or ""), settings.POS_SCRAMBLE_RATE)
+    return f"[{vibe} • {energy.upper()}] {content}"
 
 
 BATCH_SENTENCES = 12  # a 5-minute transcript would overflow the small miner model's context

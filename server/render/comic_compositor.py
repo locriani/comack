@@ -152,8 +152,13 @@ class ComicCompositor:
         
         # 1. Render Top Header Banner
         draw.rectangle([0, 0, WIDTH, self.banner_height], fill=(0, 0, 0))
-        header_font = _get_font(14, bold=True)
-        header_text = f"COMACK  •  ISSUE #{issue_number:03d}  •  {title.upper()}"
+        arc_title = script.get("arc_title") or "COMACK"
+        header_text = f"{arc_title.upper()}  •  ISSUE #{issue_number:03d}  •  {title.upper()}"
+        size = 14
+        header_font = _get_font(size, bold=True)
+        while size > 8 and draw.textlength(header_text, font=header_font) > WIDTH - 2 * self.margin:
+            size -= 1  # shrink long titles to fit the banner
+            header_font = _get_font(size, bold=True)
         draw.text((self.margin, 6), header_text, fill=(255, 255, 255), font=header_font)
         
         # 2. Panel area, grown by half a gutter since each panel shrinks by that much

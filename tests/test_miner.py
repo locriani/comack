@@ -12,11 +12,12 @@ class TestMiner(unittest.TestCase):
             {"vibe": "calm", "energy": "extreme", "content": "Pass the kazoo."},
             {"vibe": "extra", "energy": "low", "content": "Beyond the input count."},
         ]}
-        with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=llm)):
+        with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=llm)), \
+             patch.object(thematic_miner, "scramble_text", lambda t, rate: f"~{t}~"):
             rows = asyncio.run(thematic_miner.mine_sentences("Who moved it? I did."))
-        self.assertEqual(rows, [   # stored exactly as the LLM wrote it: no second scramble
-            "[VERY DEEPLY SUSPICIOUS • HIGH] The toaster knows.",
-            "[CALM • MEDIUM] Pass the kazoo.",
+        self.assertEqual(rows, [   # the LLM's content gets the second scramble; the tag doesn't
+            "[VERY DEEPLY SUSPICIOUS • HIGH] ~The toaster knows.~",
+            "[CALM • MEDIUM] ~Pass the kazoo.~",
         ])
 
     def test_long_transcripts_are_mined_in_batches(self):
