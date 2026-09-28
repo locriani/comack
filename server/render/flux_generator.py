@@ -124,14 +124,10 @@ class FluxGenerator:
             steps = settings.FLUX_INFERENCE_STEPS
             guidance = settings.FLUX_GUIDANCE_SCALE
         
+        # SD-Turbo's CLIP encoder reads only 77 tokens: short style prefix first, then the scene.
         prompt = (
-            f"1-bit monochrome e-ink comic panel, {genre} graphic novel style, "
-            f"bold crisp black ink outlines, dramatic high contrast chiaroscuro, "
-            f"heavy solid black fills, clean white negative space, "
-            f"fine crosshatching, vintage manga screentone textures, woodcut line art, "
-            f"{scene_description}. "
-            f"Sharp ink illustration, pure black and white, no color, no blurry gray gradients, "
-            f"crisp distinct silhouettes, optimized for 1-bit e-paper display"
+            f"black and white ink comic panel, bold outlines, high contrast, solid blacks, "
+            f"crosshatching, no gray: {scene_description}"
         )
         
         try:

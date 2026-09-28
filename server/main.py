@@ -19,6 +19,7 @@ from server.storage import db
 from server.audio.vad import AudioVAD, SpeechSegment
 from server.audio.transcriber import Transcriber
 from server.privacy.thematic_miner import mine_sentences
+from server.privacy.pos_scrambler import pools
 from server.story.narrative_engine import narrative_engine
 from server.render.comic_compositor import comic_compositor
 from server.dispatcher.sneaky_dispatcher import SneakyDispatcher
@@ -208,6 +209,7 @@ async def lifespan(app: FastAPI):
         
     # Start periodic 30-min timer
     cycle_task = asyncio.create_task(periodic_comic_scheduler())
+    asyncio.create_task(asyncio.to_thread(pools))  # build scrambler word pools off the event loop
     
     yield
     

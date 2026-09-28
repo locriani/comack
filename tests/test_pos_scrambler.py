@@ -5,13 +5,18 @@ from server.privacy.pos_scrambler import scramble_text, _replacement
 
 class TestPOSScrambler(unittest.TestCase):
     def test_replacement_matches_part_of_speech(self):
-        self.assertIn(_replacement("radio", "NN"), ps.ABSURD_NOUNS)
-        self.assertTrue(_replacement("radios", "NNS").endswith("s"))
-        self.assertIn(_replacement("Marita", "NNP"), ps.ABSURD_PROPER_NOUNS)
-        self.assertTrue(_replacement("learning", "VBG").endswith("ing"))
-        self.assertTrue(_replacement("marinated", "VBN").endswith("ed"))
-        self.assertIn(_replacement("quietly", "RB"), ps.ABSURD_ADVERBS)
+        pools = ps.pools()
+        for tag in ["NN", "NNS", "NNP", "VB", "VBD", "VBG", "VBN", "VBZ", "JJ", "RB"]:
+            self.assertGreater(len(pools[tag]), 400, tag)   # wide variety, not a short list
+        self.assertIn(_replacement("radio", "NN"), pools["NN"])
+        self.assertIn(_replacement("radios", "NNS"), pools["NNS"])
+        self.assertIn(_replacement("Marita", "NNP"), pools["NNP"])
+        self.assertIn(_replacement("learning", "VBG"), pools["VBG"])
+        self.assertIn(_replacement("marinated", "VBN"), pools["VBN"])
+        self.assertIn(_replacement("want", "VBP"), pools["VB"])
+        self.assertTrue(_replacement("quietly", "RB").endswith("ly"))
         self.assertIn(_replacement("upon", "IN"), ps.PREPOSITIONS)
+        self.assertFalse(ps.BLOCKLIST & {w.lower() for p in pools.values() for w in p})
         # Grammar words stay put
         self.assertIsNone(_replacement("that", "IN"))    # conjunction, not a preposition
         self.assertIsNone(_replacement("was", "VBD"))    # auxiliary

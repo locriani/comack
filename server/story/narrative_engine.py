@@ -13,7 +13,7 @@ import httpx
 from typing import Dict, Any, List, Optional
 from server.config import settings
 from server.storage import db
-from server.privacy.pos_scrambler import ABSURD_ADJECTIVES, ABSURD_NOUNS
+from server.privacy.pos_scrambler import pools
 
 logger = logging.getLogger("comack.story")
 
@@ -121,7 +121,7 @@ class NarrativeEngine:
         target_panels = random.randint(settings.ARC_MIN_PANELS, settings.ARC_MAX_PANELS)
         genre = random.choice(ARC_GENRES)
         premise = random.choice(PREMISE_SEEDS)
-        title = f"The {random.choice(ABSURD_ADJECTIVES).title()} {random.choice(ABSURD_NOUNS).title()}"
+        title = f"The {random.choice(pools()['JJ']).title()} {random.choice(pools()['NN']).title()}"
 
         arc_id = db.create_arc(
             title=title,
@@ -191,7 +191,7 @@ TASK:
   "panels": [
     {{
       "panel_number": 1,
-      "scene_description": "High-contrast black and white ink scene description: bold character silhouettes, heavy ink outlines, stark shadows, crosshatching patterns, setting, perspective",
+      "scene_description": "At most 35 words, most important subject first: characters, action, setting, stark shadows",
       "narration": "Optional caption box text (e.g. 'Meanwhile, in Sector 9...')",
       "speech_balloons": [
         {{"character": "Character Name", "text": "Dialogue built from the room notes"}}

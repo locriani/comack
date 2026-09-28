@@ -1,57 +1,34 @@
 """
 Stochastic Part-of-Speech (POS) Scrambler for "Differential Privacy".
-Swaps a fraction of words for absurd words of the exact same part of speech
+Swaps a fraction of words for random words of the exact same part of speech
 (Penn Treebank tag from nltk's perceptron tagger), so the sentence stays grammatical:
 nouns for nouns (plural for plural), proper nouns for proper nouns, verbs in the same
 tense, adjectives, -ly adverbs, and prepositions for prepositions.
+Replacements come from the Brown corpus (1M tagged words of real English), so there are
+thousands of candidates per part of speech, already correctly inflected.
 """
+import functools
 import random
 import re
-from typing import List, Optional, Tuple
+from collections import Counter
+from typing import Dict, List, Optional, Tuple
 
 import nltk
 
-ABSURD_NOUNS = [
-    "casserole", "toaster", "jellyfish", "trombone", "kazoo", "kumquat",
-    "badger", "monocle", "submariner", "spatula", "accordion", "rutabaga",
-    "manatee", "armadillo", "turnip", "goblet", "periscope", "bureaucrat",
-    "anvil", "cantaloupe", "artichoke", "waffle", "banjo", "zeppelin",
-    "astrolabe", "tapioca", "flamingo", "poodle", "parsnip", "tuba",
-    "hovercraft", "walrus", "caterpillar", "plunger", "saxophone",
-    "dinghy", "platypus", "chihuahua", "marshmallow", "tricycle",
-    "bagpipe", "mayonnaise", "macaroni", "chupacabra", "iguana",
-    "meteorite", "hedgehog", "porcupine", "tambourine", "kaleidoscope"
-]
+# Brown corpus tag -> Penn tag (the tagger's tagset). NPS (plural proper nouns) is left out:
+# it is tiny and mostly nationalities, including a slur.
+BROWN_TO_PENN = {
+    "NN": "NN", "NNS": "NNS", "NP": "NNP", "VB": "VB", "VBD": "VBD", "VBG": "VBG",
+    "VBN": "VBN", "VBZ": "VBZ", "JJ": "JJ", "RB": "RB"
+}
 
-ABSURD_PROPER_NOUNS = [
-    "Gertrude", "Bartholomew", "Zanzibar", "Reginald", "Philippa", "Toledo",
-    "Mortimer", "Kalamazoo", "Ignatius", "Winnifred", "Timbuktu", "Cornelius",
-    "Hortense", "Poughkeepsie", "Bingley", "Ophelia", "Walla Walla", "Thaddeus"
-]
-
-# All regular verbs, so the suffix rules in _conjugate_verb stay correct.
-ABSURD_VERBS_BASE = [
-    "hypnotize", "ferment", "levitate", "interrogate", "marinate",
-    "disintegrate", "recalibrate", "tickle", "serenade", "galvanize",
-    "infiltrate", "teleport", "combust", "exfoliate", "confiscate",
-    "conspire", "catapult", "orchestrate", "vaporize", "defenestrate",
-    "crystallize", "bamboozle", "transmute", "investigate", "juggle"
-]
-
-ABSURD_ADJECTIVES = [
-    "celestial", "radioactive", "melodramatic", "suspicious", "inflatable",
-    "existential", "quantum", "biodegradable", "flamboyant", "hyperbolic",
-    "unhinged", "clandestine", "ornamental", "subterranean", "gothic",
-    "crustacean", "holographic", "sarcastic", "velvet", "fluorescent",
-    "clueless", "spectral", "nebulous", "eccentric", "microscopic",
-    "bohemian", "apocalyptic", "hypnotic", "vintage", "audacious"
-]
-
-ABSURD_ADVERBS = [
-    "suspiciously", "majestically", "reluctantly", "sarcastically", "ominously",
-    "flamboyantly", "bureaucratically", "clandestinely", "melodramatically",
-    "sheepishly", "furiously", "tenderly", "vigorously", "solemnly", "gleefully"
-]
+# Slurs and insults that occur in the (1961) Brown corpus; never used as replacements.
+BLOCKLIST = {
+    "negro", "negroes", "nigger", "niggers", "savage", "savages", "bastard", "bastards",
+    "retarded", "retard", "queer", "bitch", "gypsy", "gypsies", "crackers", "japs", "injun",
+    "injuns", "coons", "whore", "whores", "hun", "dyke", "kraut", "krauts", "paddies", "mick",
+    "cripple", "spic", "squaw", "wop", "wops"
+}
 
 # Only prepositions that rarely act as conjunctions ("for", "after", "since" often do), so a
 # swap never turns "after he left" into "beneath he left". Used both to pick and to replace.
@@ -70,30 +47,40 @@ AUXILIARIES = {
     "can", "could", "will", "would", "shall", "should", "may", "might", "must"
 }
 
-VERB_FORMS = {"VB": "base", "VBP": "base", "VBD": "ed", "VBN": "ed", "VBG": "ing", "VBZ": "s"}
+
+def _ensure(resource: str, package: str):
+    try:
+        nltk.data.find(resource)
+    except LookupError:  # one-time download into ~/nltk_data
+        nltk.download(package, quiet=True)
 
 
-def _conjugate_verb(base: str, form: str) -> str:
-    """Conjugate a regular base verb."""
-    if form == "ing":
-        return (base[:-1] if base.endswith("e") and not base.endswith("ee") else base) + "ing"
-    if form == "ed":
-        return base + ("d" if base.endswith("e") else "ed")
-    if form == "s":
-        return base + ("es" if base.endswith(("s", "sh", "ch", "x", "z")) else "s")
-    return base
-
-
-def _pluralize(noun: str) -> str:
-    return noun + ("es" if noun.endswith(("s", "sh", "ch", "x", "z")) else "s")
+@functools.cache
+def pools() -> Dict[str, List[str]]:
+    """Every Brown corpus word used 3+ times, grouped by Penn tag (~19k words, ~2s to build)."""
+    _ensure("corpora/brown", "brown")
+    from nltk.corpus import brown
+    counts = Counter()
+    for word, tag in brown.tagged_words():
+        penn = BROWN_TO_PENN.get(tag.split("-")[0])
+        if penn and word.isalpha() and len(word) > 2:
+            counts[(penn, word)] += 1
+    out: Dict[str, List[str]] = {}
+    for (penn, word), n in counts.items():
+        w = word.lower()
+        if n < 3 or w in BLOCKLIST or w in AUXILIARIES:
+            continue
+        if not (word.istitle() if penn == "NNP" else word.islower()):
+            continue
+        if penn == "RB" and not w.endswith("ly"):
+            continue
+        out.setdefault(penn, []).append(word)
+    return out
 
 
 def _tag(words: List[str]) -> List[Tuple[str, str]]:
-    try:
-        return nltk.pos_tag(words)
-    except LookupError:  # tagger data not downloaded yet (~6 MB, one time)
-        nltk.download("averaged_perceptron_tagger_eng", quiet=True)
-        return nltk.pos_tag(words)
+    _ensure("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng")
+    return nltk.pos_tag(words)
 
 
 def _replacement(word: str, tag: str) -> Optional[str]:
@@ -101,21 +88,12 @@ def _replacement(word: str, tag: str) -> Optional[str]:
     w = word.lower()
     if "'" in w or w in AUXILIARIES:
         return None
-    if tag == "NN":
-        return random.choice(ABSURD_NOUNS)
-    if tag == "NNS":
-        return _pluralize(random.choice(ABSURD_NOUNS))
-    if tag in ("NNP", "NNPS"):
-        return random.choice(ABSURD_PROPER_NOUNS)
-    if tag in VERB_FORMS:
-        return _conjugate_verb(random.choice(ABSURD_VERBS_BASE), VERB_FORMS[tag])
-    if tag == "JJ":
-        return random.choice(ABSURD_ADJECTIVES)
-    if tag == "RB" and w.endswith("ly"):
-        return random.choice(ABSURD_ADVERBS)
-    if tag == "IN" and w in PREPOSITIONS:
-        return random.choice(sorted(PREPOSITIONS - {w}))
-    return None
+    if tag == "IN":
+        return random.choice(sorted(PREPOSITIONS - {w})) if w in PREPOSITIONS else None
+    if tag == "RB" and not w.endswith("ly"):
+        return None
+    pool = pools().get("VB" if tag == "VBP" else tag)
+    return random.choice(pool) if pool else None
 
 
 def scramble_text(text: str, scramble_rate: float = 0.10) -> str:
