@@ -1,15 +1,17 @@
 """
 Audio Transcriber with differential privacy word scrambling.
-Uses faster-whisper (if available) or HTTP/Mock fallback, converts speech to text,
-applies stochastic POS scrambling, and immediately wipes raw audio and text from memory.
-Nothing is stored here: the scrambled text goes to on_transcript_ready (see privacy/thematic_miner.py).
+- TriggerListener: rolling few-second Whisper checks for trigger phrases, text dropped at once.
+- Transcriber: speech buffered in memory, transcribed and scrambled in batches every few minutes.
+Nothing is stored here: the scrambled text goes to the miner (see privacy/thematic_miner.py).
 """
 import io
 import re
 import wave
 import time
+import asyncio
 import logging
-from typing import Optional, Callable
+import threading
+from typing import Optional, Callable, List, Tuple
 from server.audio.vad import SpeechSegment
 from server.privacy.pos_scrambler import scramble_text
 from server.config import settings
@@ -19,26 +21,28 @@ logger = logging.getLogger("comack.transcriber")
 # Global reference to faster_whisper model if loaded
 _whisper_model = None
 _model_failed = False
+_model_lock = threading.Lock()  # trigger checks and batches load it from different threads
 
 
 def _get_whisper_model():
     global _whisper_model, _model_failed
-    if _whisper_model is not None or _model_failed:
+    with _model_lock:
+        if _whisper_model is not None or _model_failed:
+            return _whisper_model
+        try:
+            from faster_whisper import WhisperModel
+            logger.info(f"Loading faster-whisper model: {settings.WHISPER_MODEL_SIZE} on {settings.WHISPER_DEVICE}")
+            device = "cuda" if settings.WHISPER_DEVICE == "cuda" else "cpu"
+            compute_type = "float16" if device == "cuda" else "int8"
+            # 2 workers: a trigger check never waits behind a multi-minute batch.
+            _whisper_model = WhisperModel(settings.WHISPER_MODEL_SIZE, device=device,
+                                          compute_type=compute_type, num_workers=2)
+            logger.info("faster-whisper model loaded successfully.")
+        except Exception as e:
+            logger.warning(f"Could not load faster-whisper: {e}. Falling back to conversational mock/fallback transcriber.")
+            _model_failed = True
+            _whisper_model = None
         return _whisper_model
-    
-    try:
-        from faster_whisper import WhisperModel
-        logger.info(f"Loading faster-whisper model: {settings.WHISPER_MODEL_SIZE} on {settings.WHISPER_DEVICE}")
-        device = "cuda" if settings.WHISPER_DEVICE == "cuda" else "cpu"
-        compute_type = "float16" if device == "cuda" else "int8"
-        _whisper_model = WhisperModel(settings.WHISPER_MODEL_SIZE, device=device, compute_type=compute_type)
-        logger.info("faster-whisper model loaded successfully.")
-    except Exception as e:
-        logger.warning(f"Could not load faster-whisper: {e}. Falling back to conversational mock/fallback transcriber.")
-        _model_failed = True
-        _whisper_model = None
-        
-    return _whisper_model
 
 
 def pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
@@ -52,47 +56,87 @@ def pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
     return buf.getvalue()
 
 
-class Transcriber:
-    def __init__(
-        self, 
-        on_transcript_ready: Optional[Callable[[str, float, float], None]] = None,
-        on_secret_trigger: Optional[Callable[[str], None]] = None
-    ):
-        self.on_transcript_ready = on_transcript_ready
-        self.on_secret_trigger = on_secret_trigger
+def find_trigger(text: str) -> Optional[str]:
+    """Whisper punctuates freely ("Alpha-Protocol."), so compare on lowercase words only."""
+    words = " " + " ".join(re.findall(r"[a-z0-9']+", text.lower())) + " "
+    return next((p for p in settings.SECRET_PHRASES if f" {p} " in words), None)
 
-    def process_segment(self, segment: SpeechSegment):
-        """Transcribe speech segment, mine abstract story elements, and wipe raw text/audio."""
-        raw_text = self._transcribe(segment.pcm_bytes)
-        
-        # Discard raw PCM bytes immediately
-        del segment.pcm_bytes
-        
-        if not raw_text or not raw_text.strip():
+
+class TriggerListener:
+    """Transcribes the last few seconds of live audio every couple of seconds, only to spot
+    trigger phrases. The window's text is checked and dropped at once; nothing is kept."""
+
+    def __init__(self, transcribe: Callable[[bytes], str], on_trigger: Callable[[str], None],
+                 sample_rate: int = 16000, window_s: float = 4.0, every_s: float = 2.0,
+                 cooldown_s: float = 10.0):
+        self._transcribe = transcribe
+        self._on_trigger = on_trigger
+        self._window = bytearray()
+        self._max_bytes = int(window_s * sample_rate) * 2
+        self._every_bytes = int(every_s * sample_rate) * 2
+        self._cooldown_s = cooldown_s  # overlapping windows hear the phrase twice
+        self._fresh = 0
+        self._heard_speech = False
+        self._busy = False
+        self._quiet_until = 0.0
+
+    def feed(self, pcm: bytes, is_speech: bool):
+        """Per audio chunk, on the event loop. The check itself runs in a worker thread."""
+        self._window += pcm
+        del self._window[:-self._max_bytes]
+        self._fresh += len(pcm)
+        self._heard_speech |= is_speech
+        if self._fresh < self._every_bytes or self._busy:
             return
-            
-        clean_text = raw_text.strip()
+        heard, self._fresh, self._heard_speech = self._heard_speech, 0, False
+        if heard and time.time() >= self._quiet_until:
+            self._busy = True
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, self._check, bytes(self._window), loop)
 
-        # Secret trigger phrases force an immediate refresh. Whisper punctuates freely
-        # ("Alpha-Protocol."), so compare on lowercase words only.
-        words = " " + " ".join(re.findall(r"[a-z0-9']+", clean_text.lower())) + " "
-        phrase = next((p for p in settings.SECRET_PHRASES if f" {p} " in words), None)
-        if phrase:
-            logger.warning("🚨 Secret trigger phrase detected in speech!")
-            if self.on_secret_trigger:
-                try:
-                    self.on_secret_trigger(phrase)
-                except Exception as ex:
-                    logger.error(f"Error executing secret trigger callback: {ex}")
-        
-        # First 25% swap. This scrambled transcript lives in memory only and is NEVER stored;
-        # the miner turns it into the rows that are.
-        scrambled = scramble_text(clean_text, settings.POS_SCRAMBLE_RATE)
-        del clean_text
+    def _check(self, pcm: bytes, loop: asyncio.AbstractEventLoop):
+        try:
+            phrase = find_trigger(self._transcribe(pcm))
+            if phrase:
+                self._quiet_until = time.time() + self._cooldown_s
+                logger.warning("🚨 Secret trigger phrase detected in speech!")
+                loop.call_soon_threadsafe(self._on_trigger, phrase)
+        except Exception as e:
+            logger.error(f"Trigger check failed: {e}")
+        finally:
+            self._busy = False
+
+
+class Transcriber:
+    """Speech is buffered in memory and transcribed in one batch every few minutes."""
+
+    def __init__(self):
+        self._pcm: List[bytes] = []
+        self._start: Optional[float] = None
+
+    def add_segment(self, segment: SpeechSegment):
+        if self._start is None:
+            self._start = segment.timestamp
+        self._pcm.append(segment.pcm_bytes)
+
+    def take(self) -> Optional[Tuple[bytes, float]]:
+        """Hand over (and forget) all speech heard since the last take. Call on the event loop."""
+        pcm, start = b"".join(self._pcm), self._start
+        self._pcm, self._start = [], None
+        return (pcm, start) if pcm else None
+
+    def transcribe_batch(self, pcm: bytes, start: float) -> Optional[Tuple[str, float, float]]:
+        """Blocking. Returns (scrambled text, start timestamp, seconds of speech)."""
+        duration = len(pcm) / 32000.0
+        raw_text = self._transcribe(pcm)
+        del pcm
+        if not raw_text or not raw_text.strip():
+            return None
+        # First scramble pass. This scrambled transcript lives in memory only and is NEVER
+        # stored; the miner turns it into the rows that are.
+        scrambled = scramble_text(raw_text.strip(), settings.POS_SCRAMBLE_RATE)
         del raw_text
-
-        if self.on_transcript_ready:
-            self.on_transcript_ready(scrambled, segment.timestamp, segment.duration_seconds)
+        return scrambled, start, duration
 
     def _transcribe(self, pcm_bytes: bytes) -> str:
         """Internal transcription dispatcher."""

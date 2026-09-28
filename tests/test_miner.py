@@ -12,13 +12,19 @@ class TestMiner(unittest.TestCase):
             {"vibe": "calm", "energy": "extreme", "content": "Pass the kazoo."},
             {"vibe": "extra", "energy": "low", "content": "Beyond the input count."},
         ]}
-        with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=llm)), \
-             patch.object(thematic_miner.settings, "POS_SCRAMBLE_RATE", 0.0):
+        with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=llm)):
             rows = asyncio.run(thematic_miner.mine_sentences("Who moved it? I did."))
-        self.assertEqual(rows, [
+        self.assertEqual(rows, [   # stored exactly as the LLM wrote it: no second scramble
             "[VERY DEEPLY SUSPICIOUS • HIGH] The toaster knows.",
             "[CALM • MEDIUM] Pass the kazoo.",
         ])
+
+    def test_long_transcripts_are_mined_in_batches(self):
+        llm = AsyncMock(return_value={"sentences": [{"vibe": "x", "energy": "low", "content": "y"}] * 12})
+        with patch.object(narrative_engine, "_call_llama_cpp", llm):
+            rows = asyncio.run(thematic_miner.mine_sentences(" ".join(["Hi."] * 30)))
+        self.assertEqual(llm.await_count, 3)
+        self.assertEqual(len(rows), 30)
 
     def test_llm_down_stores_nothing(self):
         with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=None)):

@@ -52,8 +52,9 @@ class Settings(BaseModel):
     COMIC_MAX_MINUTES: float = float(os.getenv("COMIC_MAX_MINUTES", "1440"))  # 1 day
     DEFAULT_LINES_WANTED: int = int(os.getenv("DEFAULT_LINES_WANTED", "8"))
 
-    # Longest continuous speech chunk sent to Whisper (segments also end at pauses)
-    VAD_MAX_SEGMENT_SECONDS: float = float(os.getenv("VAD_MAX_SEGMENT_SECONDS", "30"))
+    # Buffered speech is transcribed, scrambled and mined this often (trigger phrases are
+    # checked continuously on a rolling few-second window instead)
+    PROCESS_INTERVAL_MINUTES: float = float(os.getenv("PROCESS_INTERVAL_MINUTES", "5"))
 
     # Stochastic Part-of-Speech "Differential Privacy" word scramble rate
     POS_SCRAMBLE_RATE: float = float(os.getenv("POS_SCRAMBLE_RATE", "0.10"))

@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from server.config import settings, COMICS_DIR, STATIC_DIR
 from server.storage import db
 from server.audio.vad import AudioVAD, SpeechSegment
-from server.audio.transcriber import Transcriber
+from server.audio.transcriber import Transcriber, TriggerListener
 from server.privacy.thematic_miner import mine_sentences
 from server.privacy.pos_scrambler import pools
 from server.story.narrative_engine import narrative_engine
@@ -35,6 +35,7 @@ transcriber: Transcriber = None
 vad: AudioVAD = None
 sneaky_dispatcher: SneakyDispatcher = None
 cycle_task: asyncio.Task = None
+trigger_listener: TriggerListener = None
 
 
 def broadcast_event(event_data: Dict[str, Any]):
@@ -166,9 +167,26 @@ async def periodic_comic_scheduler():
             logger.error(f"Error in periodic comic scheduler: {e}")
 
 
+async def periodic_transcription():
+    """Every PROCESS_INTERVAL_MINUTES: transcribe the buffered speech, scramble, mine and store."""
+    while True:
+        try:
+            await asyncio.sleep(settings.PROCESS_INTERVAL_MINUTES * 60)
+            batch = transcriber.take()
+            if batch:
+                result = await asyncio.to_thread(transcriber.transcribe_batch, *batch)
+                del batch
+                if result:
+                    await mine_and_store(*result)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic transcription: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global transcriber, vad, sneaky_dispatcher, cycle_task
+    global transcriber, trigger_listener, vad, sneaky_dispatcher, cycle_task
     
     # 1. Initialize components
     loop = asyncio.get_running_loop()
@@ -182,18 +200,14 @@ async def lifespan(app: FastAPI):
         })
         loop.create_task(_trigger_cycle_and_dispatch())
 
-    transcriber = Transcriber(
-        # ponytail: one LLM call per 10s segment, queued by llama.cpp; add a worker queue if it backs up.
-        on_transcript_ready=lambda text, ts, dur: loop.create_task(mine_and_store(text, ts, dur)),
-        on_secret_trigger=handle_secret_trigger
-    )
-    
+    transcriber = Transcriber()
+    trigger_listener = TriggerListener(transcriber._transcribe, handle_secret_trigger)
+
     vad = AudioVAD(
         sample_rate=16000,
         energy_threshold=650.0,
         speech_pad_seconds=0.8,
-        max_segment_seconds=settings.VAD_MAX_SEGMENT_SECONDS,
-        on_speech_segment=lambda seg: transcriber.process_segment(seg)
+        on_speech_segment=transcriber.add_segment
     )
     
     sneaky_dispatcher = SneakyDispatcher(
@@ -208,14 +222,15 @@ async def lifespan(app: FastAPI):
         initial_comic = await run_comic_generation_cycle()
         sneaky_dispatcher.force_dispatch()
         
-    # Start periodic 30-min timer
     cycle_task = asyncio.create_task(periodic_comic_scheduler())
+    transcribe_task = asyncio.create_task(periodic_transcription())
     asyncio.create_task(asyncio.to_thread(pools))  # build scrambler word pools off the event loop
     
     yield
     
     # Teardown
     sneaky_dispatcher.stop()
+    transcribe_task.cancel()  # ponytail: up to one interval of unprocessed speech is dropped on restart
     if cycle_task:
         cycle_task.cancel()
 
@@ -248,6 +263,7 @@ async def ws_audio_stream(websocket: WebSocket):
             data = await websocket.receive_bytes()
             if data:
                 is_speech, silence_duration = vad.process_chunk(data)
+                trigger_listener.feed(data, is_speech)
     except WebSocketDisconnect:
         logger.info("reTerminal audio stream disconnected.")
     except Exception as e:

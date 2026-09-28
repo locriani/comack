@@ -1,13 +1,12 @@
 """
 Story element miner.
-[audio] -> [transcribe] -> [25% swap] -> HERE: [LLM content per sentence] -> [25% swap] -> stored.
-The scrambled transcript itself is never stored; only these generated, re-scrambled lines are.
+[audio] -> [transcribe] -> [10% swap + digit swap] -> HERE: [LLM content per sentence] -> stored.
+The scrambled transcript itself is never stored; only these generated lines are.
 """
 import re
 import logging
 from typing import List
 from server.config import settings
-from server.privacy.pos_scrambler import scramble_text
 
 logger = logging.getLogger("comack.miner")
 
@@ -26,20 +25,27 @@ def split_sentences(text: str) -> List[str]:
 
 
 def format_row(item: dict) -> str:
-    """`[VIBE • ENERGY] content`, with the content re-scrambled."""
+    """`[VIBE • ENERGY] content`"""
     vibe = " ".join(str(item.get("vibe") or "deadpan").split()[:3]).upper()
     energy = str(item.get("energy", "")).lower()
     energy = energy if energy in ENERGIES else "medium"
-    content = scramble_text(str(item.get("content") or ""), settings.POS_SCRAMBLE_RATE)
-    return f"[{vibe} • {energy.upper()}] {content}"
+    return f"[{vibe} • {energy.upper()}] {item.get('content') or ''}"
+
+
+BATCH_SENTENCES = 12  # a 5-minute transcript would overflow the small miner model's context
 
 
 async def mine_sentences(scrambled: str) -> List[str]:
-    """One LLM call per transcript; returns one stored row per detected sentence."""
-    from server.story.narrative_engine import narrative_engine
+    """Returns one stored row per detected sentence, BATCH_SENTENCES per LLM call."""
     sentences = split_sentences(scrambled)
-    if not sentences:
-        return []
+    rows = []
+    for i in range(0, len(sentences), BATCH_SENTENCES):
+        rows += await _mine_batch(sentences[i:i + BATCH_SENTENCES])
+    return rows
+
+
+async def _mine_batch(sentences: List[str]) -> List[str]:
+    from server.story.narrative_engine import narrative_engine
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
     prompt = f"""Overheard sentences:
 {numbered}
