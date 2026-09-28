@@ -61,13 +61,13 @@
             <span id="arcDurationText">--</span>
           </div>
           <div class="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
-            <div id="arcProgressBar" class="bg-indigo-500 h-1.5 rounded-full transition-all duration-500" style="width: 15%"></div>
+            <div id="arcProgressBar" class="bg-indigo-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
           </div>
         </div>
       </div>
 
-      <!-- Sneaky Comic Radar Card -->
-      <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
+      <!-- Sneaky Comic Radar Card (hidden while the silence gate is off) -->
+      <div id="sneakyCard" class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-2">
             <span class="text-base font-bold">Sneaky Comic Mode</span>
@@ -255,6 +255,7 @@
         vadInd.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span><span>ROOM QUIET</span>';
       }
 
+      document.getElementById('sneakyCard').classList.toggle('hidden', !status.required_silence_seconds);
       document.getElementById('currentSilence').innerText = status.current_silence_seconds.toFixed(1);
       document.getElementById('reqSilence').innerText = status.required_silence_seconds.toFixed(0);
       document.getElementById('silenceProgressBar').style.width = `${status.silence_progress_pct}%`;
@@ -277,7 +278,8 @@
       document.getElementById('arcTitle').innerText = arc.title;
       document.getElementById('arcGenre').innerText = arc.genre;
       document.getElementById('arcPremise').innerText = `"${arc.premise}"`;
-      document.getElementById('arcDurationText').innerText = `${arc.target_panels} panels`;
+      document.getElementById('arcDurationText').innerText = `${arc.panels_used} / ${arc.target_panels} panels`;
+      document.getElementById('arcProgressBar').style.width = `${Math.min(100, 100 * arc.panels_used / arc.target_panels)}%`;
     }
 
     function showOriginals(issue, panelCount) {
@@ -430,12 +432,13 @@
     }
     setInterval(loadPrompts, 5000);
 
-    // Polling heartbeat for silence timer
+    // Polling heartbeat for the silence timer and arc progress
     setInterval(async () => {
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
         updateSneakyStatus(data.sneaky);
+        if (data.active_arc) updateArc(data.active_arc);
       } catch (e) {}
     }, 1000);
 

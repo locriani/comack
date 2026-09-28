@@ -71,10 +71,9 @@ class NarrativeEngine:
         """Fetch the current active story arc or seed a new one if expired/absent."""
         arc = db.get_active_arc()
         if arc:
-            used = sum(c["panel_count"] for c in db.get_arc_comics(arc["id"]))
-            if used < arc["target_panels"]:
+            if arc["panels_used"] < arc["target_panels"]:
                 return arc
-            logger.info(f"Arc '{arc['title']}' completed after {used} panels. Seeding new arc.")
+            logger.info(f"Arc '{arc['title']}' completed after {arc['panels_used']} panels. Seeding new arc.")
             db.conclude_arc(arc["id"])
 
         # The arc's length is fixed here; the script model never decides when it ends.
@@ -105,7 +104,7 @@ class NarrativeEngine:
         
         arc_comics = db.get_arc_comics(arc["id"])
         series_issue = len(arc_comics) + 1  # each arc is its own series
-        panels_used = sum(c["panel_count"] for c in arc_comics)
+        panels_used = arc["panels_used"]
         arc_progress = min(1.0, panels_used / arc["target_panels"])
 
         mined_elements = [item["scrambled_text"] for item in transcript_items if item.get("scrambled_text")]

@@ -12,7 +12,8 @@ def test_each_arc_numbers_its_issues_from_one(monkeypatch):
         db.save_comic(n, first, f"A{n}", "splash", 1, {}, "a", "b")
     second = db.create_arc("B", "B", "q", 10)
     db.save_comic(3, second, "B1", "splash", 1, {}, "a", "b")
-    db.save_comic(4, second, "B2", "splash", 1, {}, "a", "b")
+    db.save_comic(4, second, "B2", "splash", 3, {}, "a", "b")
+    assert db.get_active_arc()["panels_used"] == 4   # this arc's panels only
 
     assert [c["series_issue"] for c in db.get_recent_comics()] == [2, 1, 2, 1]
     assert db.get_comic(3)["series_issue"] == 1

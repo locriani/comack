@@ -45,8 +45,9 @@ class Settings(BaseModel):
     WHISPER_MAX_COMPRESSION: float = float(os.getenv("WHISPER_MAX_COMPRESSION", "2.4"))
     WHISPER_MAX_NO_SPEECH: float = float(os.getenv("WHISPER_MAX_NO_SPEECH", "0.6"))
     
-    # Sneaky Comic Mode: Strict silence threshold in seconds (45 to 60s)
-    SNEAKY_SILENCE_SECONDS: float = float(os.getenv("SNEAKY_SILENCE_SECONDS", "50.0"))
+    # Sneaky Comic Mode: seconds of room silence before a new comic is shown (e.g. 50).
+    # 0 = off: a comic is shown as soon as it is rendered, even mid-conversation.
+    SNEAKY_SILENCE_SECONDS: float = float(os.getenv("SNEAKY_SILENCE_SECONDS", "0"))
     
     # Spoken phrases that force an immediate refresh (comma-separated)
     SECRET_PHRASES: list[str] = [p.strip().lower() for p in os.getenv("SECRET_PHRASES", "alpha protocol").split(",") if p.strip()]

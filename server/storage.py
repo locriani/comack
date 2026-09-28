@@ -89,7 +89,10 @@ class Database:
     def get_active_arc(self) -> Optional[Dict[str, Any]]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM story_arcs WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1")
+        cursor.execute("""
+            SELECT *, (SELECT COALESCE(SUM(panel_count), 0) FROM comics WHERE arc_id = story_arcs.id) AS panels_used
+            FROM story_arcs WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1
+        """)
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None

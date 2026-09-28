@@ -88,8 +88,8 @@ class SneakyDispatcher:
                 silence_duration = self.vad.current_silence_seconds
                 is_speaking = self.vad.is_speaking
                 
-                if is_speaking:
-                    # Voice detected: screen must not update!
+                if is_speaking and settings.SNEAKY_SILENCE_SECONDS > 0:
+                    # Voice detected: screen must not update! (unless the silence gate is off)
                     continue
                     
                 # Check if strict silence threshold is satisfied
