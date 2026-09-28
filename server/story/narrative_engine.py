@@ -3,7 +3,7 @@ Story Lorekeeper & Narrative Continuity Engine.
 Connects to llama.cpp (OpenAI-compatible /v1 endpoint) on comack-server.
 Maintains story arcs with dynamic lifespans (4 hours to 7 days),
 incorporates scrambled overheard dialogue into surreal comic scripts,
-and chooses adaptive 1-, 2-, or 3-panel layouts.
+and picks a page layout (comic_compositor.LAYOUTS) to suit each scene.
 """
 import json
 import time
@@ -14,8 +14,12 @@ from typing import Dict, Any, List, Optional
 from server.config import settings
 from server.storage import db
 from server.privacy.pos_scrambler import pools
+from server.render.comic_compositor import LAYOUTS, resolve_layout
 
 logger = logging.getLogger("comack.story")
+
+LAYOUT_MENU = "\n".join(f'   - "{name}" ({len(p)} panel{"s" * (len(p) > 1)}): {use}'
+                        for name, (use, p) in LAYOUTS.items())
 
 # Diverse genres for shifting narrative universe seeds
 ARC_GENRES = [
@@ -174,20 +178,19 @@ Issue Number: #{issue_number}
 {json.dumps(mined_elements, indent=2) if mined_elements else '["(Eerie room silence... only the ambient hum of quantum machinery)"]'}
 
 TASK:
-1. Choose an ADAPTIVE layout:
-   - "1-panel" if the energy represents a single dramatic climax or contemplative splash scene.
-   - "2-panel" if there is a back-and-forth tension or cause-and-effect beat.
-   - "3-panel" for classic setup, escalation, and absurd punchline.
-3. Provide descriptive visual prompts for black-and-white ink comic illustrations, specifically optimized for a 1-bit monochrome e-ink display:
+1. Plan the story beats this issue needs, then choose the page layout whose shape serves them
+   (pacing, number of beats, energy). Write exactly as many panels as the layout has:
+{LAYOUT_MENU}
+2. Provide descriptive visual prompts for black-and-white ink comic illustrations, specifically optimized for a 1-bit monochrome e-ink display:
    - Emphasize bold silhouettes, strong foreground/background contrast, and distinct outlines.
    - Describe scenes with stark black shadows, bright white highlights, crosshatching, halftone dots, or woodcut engraving textures.
    - Avoid subtle color nuances, smoky haze, or smooth gray gradients that turn into muddy noise when dithered to 1-bit.
-4. Decide how many room notes to collect before the next issue ("lines_wanted_next", 1-30):
+3. Decide how many room notes to collect before the next issue ("lines_wanted_next", 1-30):
    fewer for a fast, punchy beat; more to let the next issue build from a richer stretch of the room.
-5. Output STRICT JSON in this exact structure:
+4. Output STRICT JSON in this exact structure:
 {{
   "title": "A witty, deadpan issue title",
-  "layout_type": "1-panel" | "2-panel" | "3-panel",
+  "layout_type": "one of the layout names above",
   "panels": [
     {{
       "panel_number": 1,
@@ -209,14 +212,16 @@ TASK:
         # Fallback if LLM call fails or returns unparseable JSON
         if not script or "panels" not in script:
             script = self._create_fallback_script(issue_number, arc, mined_elements)
-            
+
+        layout = resolve_layout(script.get("layout_type", ""), len(script["panels"]))
+        panels = script["panels"][:len(LAYOUTS[layout][1])]
         return {
             "issue_number": issue_number,
             "arc_id": arc["id"],
             "title": script.get("title", f"Episode #{issue_number}"),
-            "layout_type": script.get("layout_type", "2-panel"),
-            "panel_count": len(script.get("panels", [])),
-            "panels": script.get("panels", []),
+            "layout_type": layout,
+            "panel_count": len(panels),
+            "panels": panels,
             "lines_wanted_next": lines_wanted(script),
             "dialogue_used": mined_elements
         }
@@ -312,7 +317,7 @@ TASK:
         
         return {
             "title": f"Incident at Sector #{issue_number}",
-            "layout_type": "2-panel",
+            "layout_type": "two-columns",
             "panels": [
                 {
                     "panel_number": 1,

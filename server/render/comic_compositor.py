@@ -1,6 +1,6 @@
 """
 800x480 Comic Page Compositor and E-Paper Dithering Engine.
-Assembles 1-, 2-, or 3-panel comic strips, renders speech balloons, narrator boxes,
+Assembles comic pages from common layouts (LAYOUTS), renders speech balloons, narrator boxes,
 and sound effects, then applies Floyd-Steinberg error-diffusion dithering.
 Outputs both PNG preview and 48,000-byte 1-bit packed binary for the reTerminal E1001.
 """
@@ -8,11 +8,69 @@ import math
 import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 from server.config import settings, COMICS_DIR
 
 WIDTH = settings.DISPLAY_WIDTH   # 800
 HEIGHT = settings.DISPLAY_HEIGHT # 480
+
+T = 1 / 3
+
+
+def R(x0, y0, x1, y1):
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+# Common comic page layouts: name -> (what scene it suits, panels in reading order). Each panel is a
+# quad (top-left, top-right, bottom-right, bottom-left) in fractions of the page area; later panels
+# draw over earlier ones (the inset). The first layout for each panel count is the plain fallback.
+LAYOUTS = {
+    "splash":         ("one full-page splash: a single dramatic climax, reveal, or quiet contemplative moment",
+                       [R(0, 0, 1, 1)]),
+    "two-columns":    ("two side-by-side panels: back-and-forth dialogue, before/after",
+                       [R(0, 0, .5, 1), R(.5, 0, 1, 1)]),
+    "splash-inset":   ("full-page splash with a small close-up inset: a big moment plus someone's reaction to it",
+                       [R(0, 0, 1, 1), R(.64, .06, .97, .46)]),
+    "two-tiers":      ("two wide stacked panels: cause, then effect",
+                       [R(0, 0, 1, .5), R(0, .5, 1, 1)]),
+    "diagonal-split": ("two panels cut by a slash: a clash, confrontation, or sudden reversal",
+                       [[(0, 0), (.55, 0), (.45, 1), (0, 1)], [(.55, 0), (1, 0), (1, 1), (.45, 1)]]),
+    "slanted-tiers":  ("two tiers cut by a slope: a fall, an impact, things going sideways",
+                       [[(0, 0), (1, 0), (1, .42), (0, .58)], [(0, .58), (1, .42), (1, 1), (0, 1)]]),
+    "three-columns":  ("classic strip: setup, escalation, punchline",
+                       [R(0, 0, T, 1), R(T, 0, 2 * T, 1), R(2 * T, 0, 1, 1)]),
+    "widescreen":     ("three cinematic stacked strips: a slow, sweeping sequence or passage of time",
+                       [R(0, 0, 1, T), R(0, T, 1, 2 * T), R(0, 2 * T, 1, 1)]),
+    "big-left":       ("a big opening shot, then two small beats stacked on the right",
+                       [R(0, 0, .6, 1), R(.6, 0, 1, .5), R(.6, .5, 1, 1)]),
+    "big-right":      ("two small beats stacked on the left, then a big payoff",
+                       [R(0, 0, .4, .5), R(0, .5, .4, 1), R(.4, 0, 1, 1)]),
+    "wide-top":       ("a wide establishing shot, then two beats below",
+                       [R(0, 0, 1, .5), R(0, .5, .5, 1), R(.5, .5, 1, 1)]),
+    "wide-bottom":    ("two quick beats, then a wide punchline",
+                       [R(0, 0, .5, .5), R(.5, 0, 1, .5), R(0, .5, 1, 1)]),
+    "diagonal-three": ("three slanted columns: fast action, a chase, momentum",
+                       [[(0, 0), (.36, 0), (.30, 1), (0, 1)], [(.36, 0), (.70, 0), (.64, 1), (.30, 1)],
+                        [(.70, 0), (1, 0), (1, 1), (.64, 1)]]),
+    "grid":           ("2x2 grid: four even beats, a conversation or a countdown",
+                       [R(0, 0, .5, .5), R(.5, 0, 1, .5), R(0, .5, .5, 1), R(.5, .5, 1, 1)]),
+    "wide-top-three": ("a wide establishing shot, then three quick beats",
+                       [R(0, 0, 1, .45), R(0, .45, T, 1), R(T, .45, 2 * T, 1), R(2 * T, .45, 1, 1)]),
+    "action":         ("a wide slanted opener, then three tilted beats: chaos breaking loose",
+                       [[(0, 0), (1, 0), (1, .38), (0, .52)], [(0, .52), (.36, .47), (.30, 1), (0, 1)],
+                        [(.36, .47), (.70, .42), (.64, 1), (.30, 1)], [(.70, .42), (1, .38), (1, 1), (.64, 1)]]),
+    "five":           ("two panels over three: a busy, escalating scene",
+                       [R(0, 0, .5, .5), R(.5, 0, 1, .5), R(0, .5, T, 1), R(T, .5, 2 * T, 1), R(2 * T, .5, 1, 1)]),
+}
+MAX_PANELS = max(len(p) for _, p in LAYOUTS.values())
+
+
+def resolve_layout(name: str, panel_count: int) -> str:
+    """The requested layout if it fits the panel count, else the plain layout for that count."""
+    if name in LAYOUTS and len(LAYOUTS[name][1]) == panel_count:
+        return name
+    n = min(max(panel_count, 1), MAX_PANELS)
+    return next(k for k, (_, p) in LAYOUTS.items() if len(p) == n)
 
 
 def _get_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
@@ -85,8 +143,8 @@ class ComicCompositor:
         """
         issue_number = script.get("issue_number", 1)
         title = script.get("title", f"Issue #{issue_number}")
-        layout_type = script.get("layout_type", "2-panel")
         panels = script.get("panels", [])
+        layout_type = resolve_layout(script.get("layout_type", ""), len(panels))
         
         # Base canvas in RGB
         canvas = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
@@ -98,35 +156,28 @@ class ComicCompositor:
         header_text = f"COMACK  •  ISSUE #{issue_number:03d}  •  {title.upper()}"
         draw.text((self.margin, 6), header_text, fill=(255, 255, 255), font=header_font)
         
-        # 2. Compute panel bounding boxes
-        panel_area_top = self.banner_height + self.margin
-        panel_area_height = HEIGHT - panel_area_top - self.margin
-        num_panels = len(panels) if panels else 1
-        
-        if num_panels == 1:
-            panel_boxes = [
-                (self.margin, panel_area_top, WIDTH - self.margin, panel_area_top + panel_area_height)
-            ]
-        elif num_panels == 2:
-            panel_width = (WIDTH - (2 * self.margin) - self.gutter) // 2
-            panel_boxes = [
-                (self.margin, panel_area_top, self.margin + panel_width, panel_area_top + panel_area_height),
-                (self.margin + panel_width + self.gutter, panel_area_top, WIDTH - self.margin, panel_area_top + panel_area_height)
-            ]
-        else: # 3 panels
-            panel_width = (WIDTH - (2 * self.margin) - (2 * self.gutter)) // 3
-            panel_boxes = [
-                (self.margin + i * (panel_width + self.gutter),
-                 panel_area_top,
-                 self.margin + i * (panel_width + self.gutter) + panel_width,
-                 panel_area_top + panel_area_height)
-                for i in range(3)
-            ]
-            
-        # 3. Draw each panel
-        for i, box in enumerate(panel_boxes):
+        # 2. Panel area, grown by half a gutter since each panel shrinks by that much
+        h = self.gutter // 2
+        left, top = self.margin - h, self.banner_height + self.margin - h
+        area_w, area_h = WIDTH - self.margin + h - left, HEIGHT - self.margin + h - top
+
+        # 3. Each panel is a polygon mask: white under it (an inset's gutter), art inside it shrunk
+        #    by half a gutter, then a black ring for the frame
+        for i, quad in enumerate(LAYOUTS[layout_type][1]):
             panel_data = panels[i] if i < len(panels) else {}
-            self._render_panel(canvas, draw, box, panel_data, i, num_panels)
+            pts = [(left + fx * area_w, top + fy * area_h) for fx, fy in quad]
+            outer = Image.new("L", (WIDTH, HEIGHT), 0)
+            ImageDraw.Draw(outer).polygon(pts, fill=255)
+            canvas.paste((255, 255, 255), mask=outer)
+            inner = outer.filter(ImageFilter.MinFilter(self.gutter + 1))
+            # Text goes in the largest upright box inside the quad, so slanted edges don't clip it
+            (tlx, tly), (trx, try_), (brx, bry), (blx, bly) = pts
+            text_box = tuple(round(v) for v in (max(tlx, blx) + h, max(tly, try_) + h,
+                                                min(trx, brx) - h, min(bly, bry) - h))
+            layer = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
+            self._render_panel(layer, ImageDraw.Draw(layer), inner.getbbox(), text_box, panel_data, i)
+            canvas.paste(layer, mask=inner)
+            canvas.paste((0, 0, 0), mask=ImageChops.subtract(inner, inner.filter(ImageFilter.MinFilter(7))))
         from server.render.flux_generator import release_pipeline
         release_pipeline()
 
@@ -155,16 +206,14 @@ class ComicCompositor:
         return png_path, bin_path
 
     def _render_panel(self, canvas: Image.Image, draw: ImageDraw.ImageDraw,
-                      box: Tuple[int, int, int, int], panel_data: Dict[str, Any],
-                      index: int, total_panels: int):
-        """Render illustration, borders, narrator box, speech balloons, and SFX in a panel box."""
+                      box: Tuple[int, int, int, int], text_box: Tuple[int, int, int, int],
+                      panel_data: Dict[str, Any], index: int):
+        """Render illustration (filling box), then narrator box, speech balloons, and SFX (inside text_box).
+        The caller clips to the panel shape and draws the frame."""
         x0, y0, x1, y1 = box
         p_width = x1 - x0
         p_height = y1 - y0
-        
-        # Fill panel background
-        draw.rectangle([x0, y0, x1, y1], fill=(255, 255, 255))
-        
+
         # 1. Generate rich panel illustration with FLUX.1 (or procedural fallback)
         from server.render.flux_generator import flux_generator
         scene_desc = panel_data.get("scene_description", "")
@@ -175,10 +224,10 @@ class ComicCompositor:
         else:
             self._render_comic_art(draw, box, panel_data, index)
         
-        # Render thick classic comic frame border
-        border_width = 3
-        draw.rectangle([x0, y0, x1, y1], outline=(0, 0, 0), width=border_width)
-        
+        # Text placement uses the upright box that fits inside the panel shape
+        x0, y0, x1, y1 = text_box
+        p_width = x1 - x0
+
         # Panel Number tag in bottom right
         tag_font = _get_font(10, bold=True)
         draw.text((x1 - 18, y1 - 16), f"P{index + 1}", fill=(0, 0, 0), font=tag_font)

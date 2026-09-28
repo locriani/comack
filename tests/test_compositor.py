@@ -1,57 +1,44 @@
 import os
 import unittest
-from pathlib import Path
-from server.render.comic_compositor import comic_compositor, dither_to_1bit_monochrome
+from server.render.comic_compositor import comic_compositor, LAYOUTS, resolve_layout
 from PIL import Image
 
-class TestComicCompositor(unittest.TestCase):
-    def test_comic_compositor_output(self):
-        mock_script = {
-            "issue_number": 999,
-            "title": "The Quantum Turnip",
-            "layout_type": "2-panel",
-            "panel_count": 2,
-            "panels": [
-                {
-                    "panel_number": 1,
-                    "scene_description": "Detective examining a weird glowing turnip.",
-                    "narration": "Meanwhile in Sector 4B...",
-                    "speech_balloons": [
-                        {"character": "Agent Banjo", "text": "Is that what I think it is?"}
-                    ],
-                    "sound_effect": "HUMMM"
-                },
-                {
-                    "panel_number": 2,
-                    "scene_description": "Close up of turnip answering back.",
-                    "narration": None,
-                    "speech_balloons": [
-                        {"character": "Turnip", "text": "I demand an attorney!"}
-                    ],
-                    "sound_effect": "BZZZZT"
-                }
-            ]
-        }
-        
-        png_path, bin_path = comic_compositor.compose_comic(mock_script)
-        
-        # 1. Verify PNG exists and has correct 800x480 resolution
-        self.assertTrue(png_path.exists())
-        with Image.open(png_path) as img:
-            self.assertEqual(img.size, (800, 480))
-        
-        # 2. Verify BIN exists and is EXACTLY 48,000 bytes (800 * 480 / 8)
-        self.assertTrue(bin_path.exists())
-        file_size = os.path.getsize(bin_path)
-        self.assertEqual(file_size, 48000, f"Expected 48000 bytes for 800x480 e-paper, got {file_size}")
-        
-        # 3. Bits must carry the image (1 = white): a mostly-white comic can't pack to all zeros
-        data = bin_path.read_bytes()
-        self.assertGreater(sum(bin(b).count("1") for b in data), 800 * 480 // 2)
 
-        # Clean up test files
-        if png_path.exists(): png_path.unlink()
-        if bin_path.exists(): bin_path.unlink()
+def panel(n):
+    return {
+        "panel_number": n,
+        "scene_description": "Detective examining a weird glowing turnip.",
+        "narration": "Meanwhile in Sector 4B..." if n == 1 else None,
+        "speech_balloons": [{"character": "Agent Banjo", "text": "Is that what I think it is?"}],
+        "sound_effect": "HUMMM",
+    }
+
+
+class TestComicCompositor(unittest.TestCase):
+    def test_every_layout_composes(self):
+        for name, (_, quads) in LAYOUTS.items():
+            with self.subTest(layout=name):
+                script = {"issue_number": 999, "title": "The Quantum Turnip", "layout_type": name,
+                          "panels": [panel(n + 1) for n in range(len(quads))]}
+                png_path, bin_path = comic_compositor.compose_comic(script)
+                with Image.open(png_path) as img:
+                    self.assertEqual(img.size, (800, 480))
+                # EXACTLY 48,000 bytes (800 * 480 / 8)
+                self.assertEqual(os.path.getsize(bin_path), 48000)
+                # Bits must carry the image (1 = white): a mostly-white comic can't pack to all zeros
+                data = bin_path.read_bytes()
+                self.assertGreater(sum(bin(b).count("1") for b in data), 800 * 480 // 2)
+                png_path.unlink()
+                bin_path.unlink()
+
+    def test_resolve_layout(self):
+        self.assertEqual(resolve_layout("action", 4), "action")
+        # Mismatch or unknown -> the plain layout for that count, never random
+        self.assertEqual(resolve_layout("action", 2), "two-columns")
+        self.assertEqual(resolve_layout("2-panel", 3), "three-columns")
+        self.assertEqual(resolve_layout("", 0), "splash")
+        self.assertEqual(resolve_layout("", 9), "five")
+
 
 if __name__ == "__main__":
     unittest.main()

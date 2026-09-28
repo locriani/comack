@@ -52,7 +52,7 @@ def init_db():
         issue_number INTEGER NOT NULL UNIQUE,
         arc_id INTEGER,
         title TEXT NOT NULL,
-        layout_type TEXT NOT NULL, -- '1-panel', '2-panel', '3-panel'
+        layout_type TEXT NOT NULL, -- a comic_compositor.LAYOUTS name
         panel_count INTEGER NOT NULL,
         created_at REAL NOT NULL,
         displayed_at REAL DEFAULT NULL,
