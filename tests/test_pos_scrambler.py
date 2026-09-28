@@ -38,6 +38,15 @@ class TestPOSScrambler(unittest.TestCase):
         changed = [sum(a != b for a, b in zip(text.split(), scramble_text(text, 0.10).split())) for _ in range(20)]
         self.assertTrue(all(11 <= c <= 13 for c in changed), changed)
 
+    def test_numbers_of_three_plus_digits_get_every_digit_swapped(self):
+        text = "Call 555-867-5309 at 1,234 Elm, 3.14 or 42 at 10:30."
+        for _ in range(20):
+            out = scramble_text(text, scramble_rate=0.0)   # digits swap even at rate 0
+            self.assertEqual(len(out), len(text))
+            nums = [(a, b) for a, b in zip(text[:text.index(" or")], out) if a.isdigit()]
+            self.assertTrue(all(b.isdigit() and a != b for a, b in nums), out)
+            self.assertTrue(out.endswith(" or 42 at 10:30."), out)   # short numbers stay
+
     def test_scramble_rate_zero(self):
         text = "Please turn off the lights."
         self.assertEqual(scramble_text(text, scramble_rate=0.0), text)

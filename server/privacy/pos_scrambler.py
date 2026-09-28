@@ -96,13 +96,27 @@ def _replacement(word: str, tag: str) -> Optional[str]:
     return random.choice(pool) if pool else None
 
 
+def _swap_digits(match: re.Match) -> str:
+    num = match.group()
+    if sum(c.isdigit() for c in num) < 3:
+        return num
+    return "".join(random.choice("0123456789".replace(c, "")) if c.isdigit() else c for c in num)
+
+
+def scramble_digits(text: str) -> str:
+    """Every digit of every 3+ digit number (phone, house, card numbers) becomes a different
+    random digit. Separators join groups, so 555-1234 and 1,234 count as one number."""
+    return re.sub(r"\d(?:[\d,.\-]*\d)?", _swap_digits, text)
+
+
 def scramble_text(text: str, scramble_rate: float = 0.10) -> str:
     """
-    Replaces about scramble_rate of all words with random words of the same part of speech.
-    Preserves capitalization, punctuation, and spacing.
+    Replaces every digit of 3+ digit numbers, then about scramble_rate of all words with
+    random words of the same part of speech. Preserves capitalization, punctuation, and spacing.
     """
     if not text or not text.strip():
         return text
+    text = scramble_digits(text)
 
     tokens = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)*|[^A-Za-z\s]+|\s+", text)
     word_idx = [i for i, t in enumerate(tokens) if t[0].isalpha()]
