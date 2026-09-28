@@ -116,6 +116,7 @@ class SneakyDispatcher:
             "event": "SNEAKY_COMIC_REFRESH",
             "issue_number": comic["issue_number"],
             "series_issue": comic.get("series_issue"),
+            "panel_count": comic.get("panel_count"),
             "title": comic["title"],
             "silence_seconds": round(silence_sec, 1),
             "forced": forced,

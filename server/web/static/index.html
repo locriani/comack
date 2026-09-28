@@ -119,6 +119,14 @@
         </div>
       </div>
 
+      <!-- Originals of the issue shown above (only issues rendered since originals are kept) -->
+      <div id="originals" class="hidden flex flex-col space-y-2">
+        <div class="text-xs mono text-gray-400">Colour composite (before halftoning)</div>
+        <img id="colorImage" alt="Colour composite" class="w-full max-w-[800px] h-auto rounded border border-gray-700">
+        <div class="text-xs mono text-gray-400 pt-2">Raw panel art (click for full size)</div>
+        <div id="panelList" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+      </div>
+
     </div>
 
     <!-- Right Column: Live Audio, Transcripts & Simulation (4 cols) -->
@@ -272,7 +280,26 @@
       document.getElementById('arcDurationText').innerText = `${arc.target_panels} panels`;
     }
 
+    function showOriginals(issue, panelCount) {
+      const base = `/api/comics/${issue}`;
+      const box = document.getElementById('originals');
+      const color = document.getElementById('colorImage');
+      color.onload = () => box.classList.remove('hidden');
+      color.onerror = () => box.classList.add('hidden');   // older issues have no originals
+      color.src = `${base}/color.png`;
+      document.getElementById('panelList').replaceChildren(...Array.from({ length: panelCount || 0 }, (_, i) => {
+        const a = Object.assign(document.createElement('a'), { href: `${base}/panel${i + 1}.png`, target: '_blank' });
+        const img = Object.assign(document.createElement('img'), {
+          src: a.href, alt: `Panel ${i + 1}, raw`, loading: 'lazy',
+          className: 'w-full h-auto rounded border border-gray-700' });
+        img.onerror = () => a.remove();   // procedural panels have no raw art
+        a.append(img);
+        return a;
+      }));
+    }
+
     function updateComic(comic) {
+      showOriginals(comic.issue_number, comic.panel_count);
       document.getElementById('currentIssueTag').innerText = `Active Issue: #${comic.series_issue ?? comic.issue_number} — ${comic.title}`;
       document.getElementById('comicImage').src = `/api/comics/current.png?t=${Date.now()}`;
       if (comic.displayed_at) {
@@ -282,6 +309,7 @@
     }
 
     function refreshComicImage(data) {
+      showOriginals(data.issue_number, data.panel_count);
       document.getElementById('currentIssueTag').innerText = `Active Issue: #${data.series_issue ?? data.issue_number} — ${data.title}`;
       document.getElementById('comicImage').src = `/api/comics/current.png?t=${Date.now()}`;
       document.getElementById('lastRefreshedAt').innerText = `Last Screen Update: ${new Date().toLocaleTimeString()} (Silent for ${data.silence_seconds}s)`;
@@ -317,6 +345,7 @@
           row.className = 'p-2 rounded bg-gray-900/60 hover:bg-gray-800 border border-gray-800 flex justify-between items-center cursor-pointer';
           row.onclick = () => {
             document.getElementById('comicImage').src = `/api/comics/${c.issue_number}/png`;
+            showOriginals(c.issue_number, c.panel_count);
             document.getElementById('currentIssueTag').innerText = `Viewing Archive: #${c.series_issue} — ${c.title}`;
           };
           row.innerHTML = `
