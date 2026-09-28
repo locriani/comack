@@ -65,8 +65,8 @@ def lines_wanted(script: Dict[str, Any]) -> int:
 def story_so_far(comics: List[Dict[str, Any]]) -> str:
     """On-panel text of previous issues (oldest first) so each new issue continues the plot."""
     lines = []
-    for c in comics:
-        lines.append(f"Issue #{c['issue_number']}: {c['title']}")
+    for n, c in enumerate(comics, 1):
+        lines.append(f"Issue #{n}: {c['title']}")
         for p in json.loads(c["script_json"]).get("panels", []):
             if p.get("narration"):
                 lines.append(f"  [Caption] {p['narration']}")
@@ -118,6 +118,7 @@ class NarrativeEngine:
         issue_number = db.get_next_issue_number()
         
         arc_comics = db.get_arc_comics(arc["id"])
+        series_issue = len(arc_comics) + 1  # each arc is its own series
         panels_used = sum(c["panel_count"] for c in arc_comics)
         arc_progress = min(1.0, panels_used / arc["target_panels"])
 
@@ -149,7 +150,7 @@ Genre: {arc['genre']}
 Premise: {arc['premise']}{cast}
 Arc Progress: {arc_progress * 100:.1f}% ({panels_used} of {arc['target_panels']} panels drawn).
   The arc ends when {arc['target_panels']} panels are drawn: pace the story to land there.
-Issue Number: #{issue_number}
+Issue Number: #{series_issue}
 
 {history_section}Room notes since the last issue ([VIBE • ENERGY] line):
 {json.dumps(mined_elements, indent=2, ensure_ascii=False) if mined_elements else '["(Eerie room silence... only the ambient hum of quantum machinery)"]'}
@@ -190,9 +191,10 @@ TASK:
         panels = script["panels"][:len(LAYOUTS[layout][1])]
         return {
             "issue_number": issue_number,
+            "series_issue": series_issue,
             "arc_id": arc["id"],
             "arc_title": arc["title"],
-            "title": script.get("title", f"Episode #{issue_number}"),
+            "title": script.get("title", f"Episode #{series_issue}"),
             "layout_type": layout,
             "panel_count": len(panels),
             "panels": panels,

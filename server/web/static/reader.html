@@ -88,7 +88,7 @@
       $('arcTitle').textContent = arc.title;
       $('arcMeta').textContent = `${arc.genre} · ${arc.status.toLowerCase()} · ${arc.premise}`;
       $('issueLabel').replaceChildren(
-        Object.assign(document.createElement('b'), { textContent: `#${String(c.issue_number).padStart(3, '0')} ${c.title}` }),
+        Object.assign(document.createElement('b'), { textContent: `#${String(c.series_issue).padStart(3, '0')} ${c.title}` }),
         document.createElement('br'),
         `${c.layout_type} · ${new Date(c.created_at * 1000).toLocaleString()}${c.status === 'STEALTH_HOLD' ? ' · held' : ''}`);
       $('arcSelect').value = arc.id;
@@ -98,7 +98,7 @@
       $('nextArc').disabled = arc === arcs[arcs.length - 1];
       $('chips').replaceChildren(...arc.comics.map(ac => {
         const b = document.createElement('button');
-        b.textContent = `#${ac.issue_number}`;
+        b.textContent = `#${ac.series_issue}`;
         b.title = ac.title;
         b.className = ac.issue_number === c.issue_number ? 'on' : '';
         b.onclick = () => show(issues.findIndex(x => x.issue_number === ac.issue_number));

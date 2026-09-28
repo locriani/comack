@@ -142,7 +142,8 @@ class ComicCompositor:
         Returns: (png_path, bin_path)
         """
         issue_number = script.get("issue_number", 1)
-        title = script.get("title", f"Issue #{issue_number}")
+        series_issue = script.get("series_issue", issue_number)  # printed; issue_number names the files
+        title = script.get("title", f"Issue #{series_issue}")
         panels = script.get("panels", [])
         layout_type = resolve_layout(script.get("layout_type", ""), len(panels))
         
@@ -153,7 +154,7 @@ class ComicCompositor:
         # 1. Render Top Header Banner
         draw.rectangle([0, 0, WIDTH, self.banner_height], fill=(0, 0, 0))
         arc_title = script.get("arc_title") or "COMACK"
-        header_text = f"{arc_title.upper()}  •  ISSUE #{issue_number:03d}  •  {title.upper()}"
+        header_text = f"{arc_title.upper()}  •  ISSUE #{series_issue:03d}  •  {title.upper()}"
         size = 14
         header_font = _get_font(size, bold=True)
         while size > 8 and draw.textlength(header_text, font=header_font) > WIDTH - 2 * self.margin:

@@ -63,6 +63,7 @@ class SneakyDispatcher:
         return {
             "has_stealth_comic": self.pending_comic is not None,
             "pending_issue_number": self.pending_comic["issue_number"] if self.pending_comic else None,
+            "pending_series_issue": self.pending_comic.get("series_issue") if self.pending_comic else None,
             "is_speaking": self.vad.is_speaking,
             "current_silence_seconds": round(silence_sec, 1),
             "required_silence_seconds": required_sec,
@@ -114,6 +115,7 @@ class SneakyDispatcher:
         payload = {
             "event": "SNEAKY_COMIC_REFRESH",
             "issue_number": comic["issue_number"],
+            "series_issue": comic.get("series_issue"),
             "title": comic["title"],
             "silence_seconds": round(silence_sec, 1),
             "forced": forced,

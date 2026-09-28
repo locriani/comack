@@ -104,6 +104,7 @@ async def _generation_cycle() -> Dict[str, Any]:
     comic_record = {
         "id": comic_id,
         "issue_number": script["issue_number"],
+        "series_issue": script["series_issue"],
         "title": script["title"],
         "layout_type": script["layout_type"],
         "panel_count": script["panel_count"],
@@ -442,7 +443,8 @@ async def regenerate_issue(issue_number: int):
     comic = db.get_comic(issue_number)
     if not comic:
         raise HTTPException(status_code=404, detail=f"Issue #{issue_number} not found")
-    script = {**json.loads(comic["script_json"]), "issue_number": issue_number}
+    script = {**json.loads(comic["script_json"]), "issue_number": issue_number,
+              "series_issue": comic["series_issue"]}
 
     async def rerender():
         async with generation_lock:

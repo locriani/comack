@@ -4,6 +4,22 @@ from pathlib import Path
 import server.storage as st
 
 
+def test_each_arc_numbers_its_issues_from_one(monkeypatch):
+    monkeypatch.setattr(st, "DB_PATH", Path(tempfile.mkdtemp()) / "t.db")
+    db = st.Database()
+    first = db.create_arc("A", "A", "p", 10)
+    for n in (1, 2):
+        db.save_comic(n, first, f"A{n}", "splash", 1, {}, "a", "b")
+    second = db.create_arc("B", "B", "q", 10)
+    db.save_comic(3, second, "B1", "splash", 1, {}, "a", "b")
+    db.save_comic(4, second, "B2", "splash", 1, {}, "a", "b")
+
+    assert [c["series_issue"] for c in db.get_recent_comics()] == [2, 1, 2, 1]
+    assert db.get_comic(3)["series_issue"] == 1
+    assert [[c["series_issue"] for c in a["comics"]] for a in db.get_arcs()] == [[1, 2], [1, 2]]
+    assert db.get_next_issue_number() == 5   # the global id keeps counting
+
+
 def test_concluding_an_arc_wipes_its_lines(monkeypatch):
     monkeypatch.setattr(st, "DB_PATH", Path(tempfile.mkdtemp()) / "t.db")
     db = st.Database()

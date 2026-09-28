@@ -76,6 +76,11 @@ def init_db():
     conn.close()
 
 
+# issue_number is the global id (files, URLs); each arc is its own series numbered from #1.
+COMIC_COLS = ("*, (SELECT COUNT(*) FROM comics c2 WHERE c2.arc_id IS comics.arc_id "
+              "AND c2.issue_number <= comics.issue_number) AS series_issue")
+
+
 class Database:
     def __init__(self):
         init_db()
@@ -187,9 +192,7 @@ class Database:
     def get_stealth_hold_comic(self) -> Optional[Dict[str, Any]]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM comics WHERE status = 'STEALTH_HOLD' ORDER BY id ASC LIMIT 1
-        """)
+        cursor.execute(f"SELECT {COMIC_COLS} FROM comics WHERE status = 'STEALTH_HOLD' ORDER BY id ASC LIMIT 1")
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
@@ -208,9 +211,7 @@ class Database:
     def get_current_displayed_comic(self) -> Optional[Dict[str, Any]]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM comics WHERE status = 'DISPLAYED' ORDER BY displayed_at DESC LIMIT 1
-        """)
+        cursor.execute(f"SELECT {COMIC_COLS} FROM comics WHERE status = 'DISPLAYED' ORDER BY displayed_at DESC LIMIT 1")
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
@@ -218,16 +219,14 @@ class Database:
     def get_recent_comics(self, limit: int = 20) -> List[Dict[str, Any]]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM comics ORDER BY issue_number DESC LIMIT ?
-        """, (limit,))
+        cursor.execute(f"SELECT {COMIC_COLS} FROM comics ORDER BY issue_number DESC LIMIT ?", (limit,))
         rows = cursor.fetchall()
         conn.close()
         return [dict(r) for r in rows]
 
     def get_comic(self, issue_number: int) -> Optional[Dict[str, Any]]:
         conn = get_connection()
-        row = conn.execute("SELECT * FROM comics WHERE issue_number = ?", (issue_number,)).fetchone()
+        row = conn.execute(f"SELECT {COMIC_COLS} FROM comics WHERE issue_number = ?", (issue_number,)).fetchone()
         conn.close()
         return dict(row) if row else None
 
@@ -238,7 +237,8 @@ class Database:
             "SELECT id, title, genre, premise, status, metadata_json FROM story_arcs ORDER BY id")]
         for arc in arcs:
             arc["comics"] = [dict(r) for r in conn.execute(
-                "SELECT issue_number, title, layout_type, status, created_at FROM comics "
+                "SELECT issue_number, title, layout_type, status, created_at, "
+                "ROW_NUMBER() OVER (ORDER BY issue_number) AS series_issue FROM comics "
                 "WHERE arc_id = ? ORDER BY issue_number", (arc["id"],))]
         conn.close()
         return arcs
@@ -246,7 +246,7 @@ class Database:
     def get_arc_comics(self, arc_id: int) -> List[Dict[str, Any]]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM comics WHERE arc_id = ? ORDER BY issue_number ASC", (arc_id,))
+        cursor.execute(f"SELECT {COMIC_COLS} FROM comics WHERE arc_id = ? ORDER BY issue_number ASC", (arc_id,))
         rows = cursor.fetchall()
         conn.close()
         return [dict(r) for r in rows]

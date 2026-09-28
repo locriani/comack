@@ -255,7 +255,7 @@
       const badge = document.getElementById('sneakyBadge');
       if (status.has_stealth_comic) {
         alert.classList.remove('hidden');
-        document.getElementById('pendingIssue').innerText = `#${status.pending_issue_number}`;
+        document.getElementById('pendingIssue').innerText = `#${status.pending_series_issue ?? status.pending_issue_number}`;
         badge.className = 'text-xs mono font-bold px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800';
         badge.innerText = 'STEALTH HOLD';
       } else {
@@ -273,7 +273,7 @@
     }
 
     function updateComic(comic) {
-      document.getElementById('currentIssueTag').innerText = `Active Issue: #${comic.issue_number} — ${comic.title}`;
+      document.getElementById('currentIssueTag').innerText = `Active Issue: #${comic.series_issue ?? comic.issue_number} — ${comic.title}`;
       document.getElementById('comicImage').src = `/api/comics/current.png?t=${Date.now()}`;
       if (comic.displayed_at) {
         const d = new Date(comic.displayed_at * 1000);
@@ -282,7 +282,7 @@
     }
 
     function refreshComicImage(data) {
-      document.getElementById('currentIssueTag').innerText = `Active Issue: #${data.issue_number} — ${data.title}`;
+      document.getElementById('currentIssueTag').innerText = `Active Issue: #${data.series_issue ?? data.issue_number} — ${data.title}`;
       document.getElementById('comicImage').src = `/api/comics/current.png?t=${Date.now()}`;
       document.getElementById('lastRefreshedAt').innerText = `Last Screen Update: ${new Date().toLocaleTimeString()} (Silent for ${data.silence_seconds}s)`;
       loadHistory();
@@ -317,11 +317,11 @@
           row.className = 'p-2 rounded bg-gray-900/60 hover:bg-gray-800 border border-gray-800 flex justify-between items-center cursor-pointer';
           row.onclick = () => {
             document.getElementById('comicImage').src = `/api/comics/${c.issue_number}/png`;
-            document.getElementById('currentIssueTag').innerText = `Viewing Archive: #${c.issue_number} — ${c.title}`;
+            document.getElementById('currentIssueTag').innerText = `Viewing Archive: #${c.series_issue} — ${c.title}`;
           };
           row.innerHTML = `
             <div>
-              <span class="font-bold text-white">#${c.issue_number}</span> ${c.title}
+              <span class="font-bold text-white">#${c.series_issue}</span> ${c.title}
             </div>
             <span class="text-[10px] text-gray-500">${new Date(c.created_at * 1000).toLocaleTimeString()}</span>
           `;
