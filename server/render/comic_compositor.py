@@ -168,6 +168,26 @@ class ComicCompositor:
 
         # 3. Each panel is a polygon mask: white under it (an inset's gutter), art inside it shrunk
         #    by half a gutter, then a black ring for the frame
+        from server.render.flux_generator import release_pipeline
+        try:
+            self._draw_panels(canvas, layout_type, panels, left, top, area_w, area_h, h)
+        finally:  # also when a panel gives up (PanelArtFailed): the pipeline holds ~17 GB of RAM
+            release_pipeline()
+
+        # 4. Dither and Export
+        dithered_img, bin_bytes = dither_to_1bit_monochrome(canvas)
+
+        # Ensure 48,000 bytes exactly
+        assert len(bin_bytes) == (WIDTH * HEIGHT // 8), f"Bin size must be 48000, got {len(bin_bytes)}"
+
+        # Only the numbered issue: /api/comics/current.* serves whichever issue is displayed
+        png_path = COMICS_DIR / f"issue_{issue_number:04d}.png"
+        bin_path = COMICS_DIR / f"issue_{issue_number:04d}.bin"
+        dithered_img.save(png_path)
+        bin_path.write_bytes(bin_bytes)
+        return png_path, bin_path
+
+    def _draw_panels(self, canvas, layout_type, panels, left, top, area_w, area_h, h):
         for i, quad in enumerate(LAYOUTS[layout_type][1]):
             panel_data = panels[i] if i < len(panels) else {}
             pts = [(left + fx * area_w, top + fy * area_h) for fx, fy in quad]
@@ -183,32 +203,6 @@ class ComicCompositor:
             self._render_panel(layer, ImageDraw.Draw(layer), inner.getbbox(), text_box, panel_data, i)
             canvas.paste(layer, mask=inner)
             canvas.paste((0, 0, 0), mask=ImageChops.subtract(inner, inner.filter(ImageFilter.MinFilter(7))))
-        from server.render.flux_generator import release_pipeline
-        release_pipeline()
-
-        # 4. Dither and Export
-        dithered_img, bin_bytes = dither_to_1bit_monochrome(canvas)
-        
-        # Ensure 48,000 bytes exactly
-        assert len(bin_bytes) == (WIDTH * HEIGHT // 8), f"Bin size must be 48000, got {len(bin_bytes)}"
-        
-        issue_str = f"issue_{issue_number:04d}"
-        png_path = COMICS_DIR / f"{issue_str}.png"
-        bin_path = COMICS_DIR / f"{issue_str}.bin"
-        current_png = COMICS_DIR / "current.png"
-        current_bin = COMICS_DIR / "current.bin"
-        
-        # Save numbered issue
-        dithered_img.save(png_path)
-        with open(bin_path, "wb") as f:
-            f.write(bin_bytes)
-            
-        # Update current pointers
-        dithered_img.save(current_png)
-        with open(current_bin, "wb") as f:
-            f.write(bin_bytes)
-            
-        return png_path, bin_path
 
     def _render_panel(self, canvas: Image.Image, draw: ImageDraw.ImageDraw,
                       box: Tuple[int, int, int, int], text_box: Tuple[int, int, int, int],

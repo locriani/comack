@@ -4,6 +4,7 @@ Story element miner.
 The scrambled transcript itself is never stored; only these generated, re-scrambled lines are.
 """
 import re
+import asyncio
 import logging
 from typing import List
 from server.config import settings
@@ -63,4 +64,5 @@ Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} 
     if not items:
         # ponytail: LLM down = these sentences are dropped; add a local fallback if outages are common.
         logger.warning(f"Miner got no LLM content; dropped {len(sentences)} sentence(s).")
-    return [format_row(i) for i in items[:len(sentences)] if isinstance(i, dict)]
+    # POS tagging for the second scramble is CPU work: keep it off the event loop
+    return await asyncio.to_thread(lambda: [format_row(i) for i in items[:len(sentences)] if isinstance(i, dict)])

@@ -16,68 +16,75 @@ from server.config import settings
 logger = logging.getLogger("comack.flux")
 
 _pipeline = None
-_pipeline_failed = False
+
+# Seconds to wait between attempts at a panel; after the last one the comic is abandoned.
+RETRY_DELAYS_S = (15, 30, 60, 120, 240)
+
+
+class FluxUnavailable(Exception):
+    """No local diffusion stack at all (e.g. a dev machine): retrying can't help."""
+
+
+class PanelArtFailed(RuntimeError):
+    """Every attempt at a panel failed; the comic should not be published."""
 
 
 def _load_flux_pipeline():
-    """Load the image generation pipeline (FLUX or SD-Turbo)."""
-    global _pipeline, _pipeline_failed
-    if _pipeline is not None or _pipeline_failed:
+    """Load the image generation pipeline (FLUX or SD-Turbo). Raises on failure."""
+    global _pipeline
+    if _pipeline is not None:
         return _pipeline
-        
+
     try:
         import torch
         from diffusers import FluxPipeline, AutoPipelineForText2Image
-        
-        token = os.getenv("HF_TOKEN")
-        if not token:
-            token_path = Path.home() / ".cache" / "huggingface" / "token"
-            if token_path.exists():
-                token = token_path.read_text().strip()
-                
-        model_id = settings.FLUX_MODEL_ID
-        is_flux = "flux" in model_id.lower()
-        logger.info(f"Loading image model: '{model_id}' (is_flux={is_flux}, token present: {bool(token)})...")
-        
-        if is_flux:
-            from diffusers import FluxTransformer2DModel, GGUFQuantizationConfig
-            # 4-bit GGUF transformer (6.8 GB) instead of the 24 GB bf16 one; the text
-            # encoders and VAE come from the official repo. Model CPU offload keeps only one
-            # component on the GPU at a time (peak ~10 GB: the T5 encoder).
-            transformer = FluxTransformer2DModel.from_single_file(
-                settings.FLUX_GGUF_URL,
-                quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
-                torch_dtype=torch.bfloat16,
-                config=model_id, subfolder="transformer", token=token
-            )
-            pipe = FluxPipeline.from_pretrained(
-                model_id, transformer=transformer, torch_dtype=torch.bfloat16, token=token
-            )
-            pipe.enable_model_cpu_offload()
+    except ImportError as e:
+        raise FluxUnavailable(e)
+
+    token = os.getenv("HF_TOKEN")
+    if not token:
+        token_path = Path.home() / ".cache" / "huggingface" / "token"
+        if token_path.exists():
+            token = token_path.read_text().strip()
+
+    model_id = settings.FLUX_MODEL_ID
+    is_flux = "flux" in model_id.lower()
+    logger.info(f"Loading image model: '{model_id}' (is_flux={is_flux}, token present: {bool(token)})...")
+
+    if is_flux:
+        from diffusers import FluxTransformer2DModel, GGUFQuantizationConfig
+        # 4-bit GGUF transformer (6.8 GB) instead of the 24 GB bf16 one; the text
+        # encoders and VAE come from the official repo. Model CPU offload keeps only one
+        # component on the GPU at a time (peak ~10 GB: the T5 encoder).
+        transformer = FluxTransformer2DModel.from_single_file(
+            settings.FLUX_GGUF_URL,
+            quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
+            torch_dtype=torch.bfloat16,
+            config=model_id, subfolder="transformer", token=token
+        )
+        pipe = FluxPipeline.from_pretrained(
+            model_id, transformer=transformer, torch_dtype=torch.bfloat16, token=token
+        )
+        pipe.enable_model_cpu_offload()
+    else:
+        use_cuda = torch.cuda.is_available() and settings.FLUX_DEVICE == "cuda"
+        # fp16 only on the GPU; fp16 on CPU is ~10x slower than fp32.
+        pipe = AutoPipelineForText2Image.from_pretrained(
+            model_id,
+            torch_dtype=torch.float16 if use_cuda else torch.float32,
+            variant="fp16" if use_cuda else None,
+            token=token
+        )
+        if use_cuda:
+            pipe.to("cuda")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            pipe.to("mps")
         else:
-            use_cuda = torch.cuda.is_available() and settings.FLUX_DEVICE == "cuda"
-            # fp16 only on the GPU; fp16 on CPU is ~10x slower than fp32.
-            pipe = AutoPipelineForText2Image.from_pretrained(
-                model_id,
-                torch_dtype=torch.float16 if use_cuda else torch.float32,
-                variant="fp16" if use_cuda else None,
-                token=token
-            )
-            if use_cuda:
-                pipe.to("cuda")
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                pipe.to("mps")
-            else:
-                pipe.to("cpu")
-            
-        _pipeline = pipe
-        logger.info(f"Model '{model_id}' loaded successfully and ready for generation.")
-        return _pipeline
-        
-    except Exception as e:
-        logger.error(f"Failed to load image generation pipeline: {e}")
-        _pipeline_failed = True
-        return None
+            pipe.to("cpu")
+
+    _pipeline = pipe
+    logger.info(f"Model '{model_id}' loaded successfully and ready for generation.")
+    return _pipeline
 
 
 def _wait_for_vram(min_free_gb: float, timeout_s: float) -> bool:
@@ -91,22 +98,22 @@ def _wait_for_vram(min_free_gb: float, timeout_s: float) -> bool:
         if free_gb >= min_free_gb:
             return True
         if time.time() >= deadline:
-            logger.warning(f"Only {free_gb:.1f} GB VRAM free after {timeout_s:.0f}s; skipping FLUX for this panel.")
-            return False
+            raise RuntimeError(f"only {free_gb:.1f} GB VRAM free after {timeout_s:.0f}s")
         time.sleep(5)
 
 
 def release_pipeline():
     """Free the pipeline after a comic (~17 GB of RAM while loaded; comics are minutes apart)."""
     global _pipeline
-    if _pipeline is None:
-        return
     _pipeline = None
+    try:
+        import torch
+    except ImportError:
+        return
     import gc
-    import torch
     gc.collect()
     if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+        torch.cuda.empty_cache()  # also drops an OOM's half-built tensors
     logger.info("Image pipeline released.")
 
 
@@ -121,7 +128,8 @@ class FluxGenerator:
         :param scene_description: Visual description from the story engine
         :param target_size: (width, height) in pixels
         :param genre: Comic genre context
-        :return: PIL Image or None if model unavailable
+        :return: PIL Image, or None only when no local pipeline exists at all
+        :raises PanelArtFailed: every retry failed
         """
         # 1. External ComfyUI / HTTP endpoint if configured
         if settings.FLUX_API_URL:
@@ -129,17 +137,30 @@ class FluxGenerator:
             if img:
                 return img
 
-        # 2. Local diffusion pipeline
+        # 2. Local diffusion pipeline, retried with backoff (OOM, LLM hogging VRAM, load errors)
+        for attempt, delay in enumerate((*RETRY_DELAYS_S, None), 1):
+            try:
+                return self._generate_local(scene_description, target_size)
+            except FluxUnavailable as e:
+                logger.warning(f"No local image pipeline ({e}); using procedural art.")
+                return None
+            except Exception as e:
+                # An OOM can leave offloaded modules split across devices; start clean.
+                release_pipeline()
+                if delay is None:
+                    raise PanelArtFailed(f"panel failed after {attempt} attempts: {e}") from e
+                logger.warning(f"Panel attempt {attempt} failed ({e}); retrying in {delay}s.")
+                time.sleep(delay)
+
+    def _generate_local(self, scene_description: str, target_size: Tuple[int, int]) -> Image.Image:
         width, height = target_size
         model_id = settings.FLUX_MODEL_ID.lower()
         is_flux = "flux" in model_id
         is_turbo = "turbo" in model_id
 
-        if is_flux and not _wait_for_vram(settings.FLUX_MIN_FREE_VRAM_GB, settings.FLUX_VRAM_WAIT_SECONDS):
-            return None
         pipe = _load_flux_pipeline()
-        if pipe is None:
-            return None
+        if is_flux:
+            _wait_for_vram(settings.FLUX_MIN_FREE_VRAM_GB, settings.FLUX_VRAM_WAIT_SECONDS)
 
         # Dimensions must align to model requirements
         multiple = 16 if is_flux else 8
@@ -170,34 +191,25 @@ class FluxGenerator:
             f"crosshatching, no gray: {scene_description}"
         )
         
-        try:
-            logger.info(f"Generating panel with {settings.FLUX_MODEL_ID} ({gen_w}x{gen_h}, {steps} steps)...")
-            kwargs = {
-                "prompt": prompt,
-                "width": gen_w,
-                "height": gen_h,
-                "num_inference_steps": steps,
-                "guidance_scale": guidance,
-            }
-            if is_flux:
-                kwargs["max_sequence_length"] = 512
-                
-            result = pipe(**kwargs)
-            raw_img = result.images[0]
-            # Convert to grayscale and enhance contrast for clean 1-bit dithering
-            from PIL import ImageOps, ImageEnhance
-            gray_img = raw_img.convert("L")
-            gray_img = ImageOps.autocontrast(gray_img, cutoff=1)
-            enhancer = ImageEnhance.Contrast(gray_img)
-            gray_img = enhancer.enhance(1.25)
-            # Resize exactly to panel target_size
-            return gray_img.resize((width, height), Image.Resampling.LANCZOS)
-        except Exception as e:
-            logger.error(f"Error during panel generation: {e}")
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()  # an OOM leaves its half-built tensors cached
-            return None
+        logger.info(f"Generating panel with {settings.FLUX_MODEL_ID} ({gen_w}x{gen_h}, {steps} steps)...")
+        kwargs = {
+            "prompt": prompt,
+            "width": gen_w,
+            "height": gen_h,
+            "num_inference_steps": steps,
+            "guidance_scale": guidance,
+        }
+        if is_flux:
+            kwargs["max_sequence_length"] = 512
+
+        raw_img = pipe(**kwargs).images[0]
+        # Convert to grayscale and enhance contrast for clean 1-bit dithering
+        from PIL import ImageOps, ImageEnhance
+        gray_img = raw_img.convert("L")
+        gray_img = ImageOps.autocontrast(gray_img, cutoff=1)
+        gray_img = ImageEnhance.Contrast(gray_img).enhance(1.25)
+        # Resize exactly to panel target_size
+        return gray_img.resize((width, height), Image.Resampling.LANCZOS)
 
     def _generate_via_api(self, prompt: str, target_size: Tuple[int, int]) -> Optional[Image.Image]:
         """Optional HTTP generation if ComfyUI or SD endpoint is running on comack-server."""

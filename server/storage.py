@@ -233,6 +233,12 @@ class Database:
         conn.close()
         return [dict(r) for r in rows]
 
+    def get_comic(self, issue_number: int) -> Optional[Dict[str, Any]]:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM comics WHERE issue_number = ?", (issue_number,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
     def get_arcs(self) -> List[Dict[str, Any]]:
         """Every arc, oldest first, each with its issues (no scripts) for the reader."""
         conn = get_connection()

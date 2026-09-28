@@ -59,7 +59,15 @@ async def mine_and_store(scrambled: str, timestamp: float, duration: float):
             "id": t_id, "timestamp": timestamp, "duration_seconds": duration, "scrambled_text": row}})
 
 
+generation_lock = asyncio.Lock()  # one comic at a time: FLUX can't share the GPU, and issue numbers must not collide
+
+
 async def run_comic_generation_cycle() -> Dict[str, Any]:
+    async with generation_lock:
+        return await _generation_cycle()
+
+
+async def _generation_cycle() -> Dict[str, Any]:
     """Execute a 30-minute comic generation cycle."""
     logger.info("Executing comic generation cycle...")
     
@@ -129,6 +137,8 @@ async def _trigger_cycle_and_dispatch():
         return
     _trigger_running = True
     try:
+        async with generation_lock:  # a comic mid-generation is the one to reveal
+            pass
         if sneaky_dispatcher.force_dispatch():
             logger.info("⚡ Held comic revealed immediately.")
             return
@@ -159,7 +169,7 @@ async def periodic_comic_scheduler():
             last = db.get_recent_comics(limit=1)
             since = time.time() - (last[0]["created_at"] if last else started)
             wanted = int(db.get_state("lines_wanted", str(settings.DEFAULT_LINES_WANTED)))
-            if comic_due(since, len(db.get_unprocessed_transcripts()), wanted):
+            if not generation_lock.locked() and comic_due(since, len(db.get_unprocessed_transcripts()), wanted):
                 await run_comic_generation_cycle()
         except asyncio.CancelledError:
             break
@@ -216,12 +226,12 @@ async def lifespan(app: FastAPI):
     )
     sneaky_dispatcher.start()
     
-    # Ensure at least one initial comic exists on startup so screen is never blank
+    # Ensure at least one initial comic exists so the screen is never blank; in the background,
+    # so the API serves while it renders
     if not db.get_current_displayed_comic() and not db.get_stealth_hold_comic():
         logger.info("No existing comic found. Generating initial comic Issue #001...")
-        initial_comic = await run_comic_generation_cycle()
-        sneaky_dispatcher.force_dispatch()
-        
+        asyncio.create_task(_trigger_cycle_and_dispatch())
+
     cycle_task = asyncio.create_task(periodic_comic_scheduler())
     transcribe_task = asyncio.create_task(periodic_transcription())
     asyncio.create_task(asyncio.to_thread(pools))  # build scrambler word pools off the event loop
@@ -352,22 +362,21 @@ async def get_current_comic():
     return comic
 
 
+def _displayed_issue() -> int:
+    comic = db.get_current_displayed_comic()
+    if not comic:
+        raise HTTPException(status_code=404, detail="No displayed comic yet")
+    return comic["issue_number"]
+
+
 @app.get("/api/comics/current.png")
 async def get_current_comic_png():
-    path = COMICS_DIR / "current.png"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Current comic PNG not found")
-    return FileResponse(path, media_type="image/png")
+    return await get_issue_png(_displayed_issue())
 
 
 @app.get("/api/comics/current.bin")
 async def get_current_comic_bin():
-    path = COMICS_DIR / "current.bin"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Current comic BIN not found")
-    with open(path, "rb") as f:
-        data = f.read()
-    return Response(content=data, media_type="application/octet-stream")
+    return await get_issue_bin(_displayed_issue())
 
 
 @app.get("/api/comics/history")
@@ -410,6 +419,27 @@ async def trigger_generate():
     return {"status": "generated", "comic": comic}
 
 
+@app.post("/api/comics/{issue_number}/regenerate")
+async def regenerate_issue(issue_number: int):
+    """Re-render an issue's art from its saved script (same text and layout, new panels).
+    A displayed issue is redrawn on the device only when it next fetches that issue."""
+    comic = db.get_comic(issue_number)
+    if not comic:
+        raise HTTPException(status_code=404, detail=f"Issue #{issue_number} not found")
+    script = {**json.loads(comic["script_json"]), "issue_number": issue_number}
+
+    async def rerender():
+        async with generation_lock:
+            try:
+                await asyncio.to_thread(comic_compositor.compose_comic, script)
+                logger.info(f"Issue #{issue_number} regenerated.")
+            except Exception as e:
+                logger.error(f"Regenerating issue #{issue_number} failed: {e}")
+
+    asyncio.create_task(rerender())
+    return {"status": "regenerating", "issue_number": issue_number}
+
+
 @app.post("/api/comics/force_reveal")
 async def trigger_force_reveal():
     """Bypass silence countdown and reveal pending comic immediately."""
@@ -425,11 +455,10 @@ async def simulate_speech_dialogue(payload: Dict[str, Any]):
     text = payload.get("text", "The quick brown fox jumps over the lazy dog.")
     duration = float(payload.get("duration", 2.5))
     
-    # Reset silence
-    vad.last_speech_timestamp = time.time()
-    vad.current_silence_seconds = 0.0
-    
+    vad.reset_silence()
+
     # Same path as real speech: scramble, then mine; only mined rows are stored
     from server.privacy.pos_scrambler import scramble_text
-    await mine_and_store(scramble_text(text, settings.POS_SCRAMBLE_RATE), time.time(), duration)
+    scrambled = await asyncio.to_thread(scramble_text, text, settings.POS_SCRAMBLE_RATE)
+    await mine_and_store(scrambled, time.time(), duration)
     return {"status": "simulated"}
