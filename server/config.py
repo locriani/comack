@@ -41,6 +41,9 @@ class Settings(BaseModel):
     # Sneaky Comic Mode: Strict silence threshold in seconds (45 to 60s)
     SNEAKY_SILENCE_SECONDS: float = float(os.getenv("SNEAKY_SILENCE_SECONDS", "50.0"))
     
+    # Spoken phrases that force an immediate refresh (comma-separated)
+    SECRET_PHRASES: list[str] = [p.strip().lower() for p in os.getenv("SECRET_PHRASES", "alpha protocol").split(",") if p.strip()]
+
     # Comic generation interval in minutes (default 30 min)
     COMIC_CYCLE_MINUTES: int = int(os.getenv("COMIC_CYCLE_MINUTES", "30"))
     

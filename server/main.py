@@ -104,16 +104,27 @@ async def run_comic_generation_cycle() -> Dict[str, Any]:
     return comic_record
 
 
+_trigger_running = False
+
+
 async def _trigger_cycle_and_dispatch():
-    """Trigger an immediate comic generation cycle and immediately dispatch to display."""
+    """Refresh the display now: reveal a held comic instantly, otherwise generate one and reveal it."""
+    global _trigger_running
+    if _trigger_running:  # the phrase often lands in several segments; one refresh is enough
+        return
+    _trigger_running = True
     try:
-        logger.info("⚡ Executing immediate comic generation cycle...")
+        if sneaky_dispatcher.force_dispatch():
+            logger.info("⚡ Held comic revealed immediately.")
+            return
+        logger.info("⚡ Nothing held; generating a comic for immediate display...")
         await run_comic_generation_cycle()
-        if sneaky_dispatcher:
-            sneaky_dispatcher.force_dispatch()
+        sneaky_dispatcher.force_dispatch()
         logger.info("⚡ Immediate comic generation completed and dispatched to display!")
     except Exception as e:
         logger.error(f"Error executing immediate comic cycle: {e}")
+    finally:
+        _trigger_running = False
 
 
 async def periodic_comic_scheduler():

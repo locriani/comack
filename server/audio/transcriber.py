@@ -4,6 +4,7 @@ Uses faster-whisper (if available) or HTTP/Mock fallback, converts speech to tex
 applies stochastic POS scrambling, saves to DB, and immediately wipes raw audio from memory.
 """
 import io
+import re
 import wave
 import time
 import logging
@@ -72,13 +73,15 @@ class Transcriber:
             
         clean_text = raw_text.strip()
 
-        # Check for secret trigger phrase: "alpha protocol" (triggers immediate new comic frame)
-        import re
-        if re.search(r'\balpha\s+protocol\b', clean_text, re.IGNORECASE):
-            logger.warning("🚨 [ALPHA PROTOCOL DETECTED] Secret trigger phrase identified in speech!")
+        # Secret trigger phrases force an immediate refresh. Whisper punctuates freely
+        # ("Alpha-Protocol."), so compare on lowercase words only.
+        words = " " + " ".join(re.findall(r"[a-z0-9']+", clean_text.lower())) + " "
+        phrase = next((p for p in settings.SECRET_PHRASES if f" {p} " in words), None)
+        if phrase:
+            logger.warning("🚨 Secret trigger phrase detected in speech!")
             if self.on_secret_trigger:
                 try:
-                    self.on_secret_trigger("alpha protocol")
+                    self.on_secret_trigger(phrase)
                 except Exception as ex:
                     logger.error(f"Error executing secret trigger callback: {ex}")
         

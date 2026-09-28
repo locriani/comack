@@ -26,7 +26,8 @@ class AudioVAD:
                  sample_rate: int = 16000,
                  energy_threshold: float = 650.0,
                  speech_pad_seconds: float = 0.8,
-                 on_speech_segment: Optional[Callable[[SpeechSegment], None]] = None):
+                 on_speech_segment: Optional[Callable[[SpeechSegment], None]] = None,
+                 max_segment_seconds: float = 10.0):
         """
         :param sample_rate: Sample rate in Hz (default 16000)
         :param energy_threshold: Minimum RMS energy for speech (approx 500-1500 for 16-bit PCM)
@@ -37,6 +38,7 @@ class AudioVAD:
         self.energy_threshold = energy_threshold
         self.speech_pad_seconds = speech_pad_seconds
         self.on_speech_segment = on_speech_segment
+        self.max_segment_seconds = max_segment_seconds
         
         # Live state
         self.is_speaking = False
@@ -104,7 +106,12 @@ class AudioVAD:
                 
             if self.is_speaking:
                 self._speech_buffer.append(pcm_bytes)
-                
+                # Continuous sound (TV, music) never yields the trailing pause, so
+                # flush long segments to keep transcription (and trigger phrases) flowing.
+                # ponytail: a phrase straddling the cut is missed; overlap chunks if that bites.
+                if len(self._speech_buffer) * chunk_duration >= self.max_segment_seconds:
+                    self._emit_segment(now)
+
         else:
             self._consecutive_silent_frames += 1
             self._consecutive_speech_frames = 0
@@ -116,24 +123,25 @@ class AudioVAD:
                 # Check if speech segment has ended
                 if silent_duration >= self.speech_pad_seconds:
                     self.is_speaking = False
-                    total_bytes = b"".join(self._speech_buffer)
-                    total_duration = (len(total_bytes) / 2) / self.sample_rate
-                    
-                    # Only emit if segment has at least 0.4s of actual speech
-                    if total_duration >= 0.4:
-                        segment = SpeechSegment(
-                            pcm_bytes=total_bytes,
-                            timestamp=self._segment_start_time or (now - total_duration),
-                            duration_seconds=total_duration
-                        )
-                        if self.on_speech_segment:
-                            self.on_speech_segment(segment)
-                            
-                    self._speech_buffer = []
+                    self._emit_segment(now)
                     self._segment_start_time = None
-                    
+
         self.last_chunk_timestamp = now
         return chunk_is_speech, self.current_silence_seconds
+
+    def _emit_segment(self, now: float):
+        total_bytes = b"".join(self._speech_buffer)
+        total_duration = (len(total_bytes) / 2) / self.sample_rate
+
+        # Only emit if segment has at least 0.4s of actual speech
+        if total_duration >= 0.4 and self.on_speech_segment:
+            self.on_speech_segment(SpeechSegment(
+                pcm_bytes=total_bytes,
+                timestamp=self._segment_start_time or (now - total_duration),
+                duration_seconds=total_duration
+            ))
+        self._speech_buffer = []
+        self._segment_start_time = now
 
     def reset_silence(self):
         """Manually reset the silence timer (e.g. when voice is detected externally)."""
