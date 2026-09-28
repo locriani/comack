@@ -213,13 +213,17 @@ esp_err_t microlink_tcp_send(microlink_tcp_socket_t *sock, const void *data, siz
     if (!data || len == 0) return ESP_ERR_INVALID_ARG;
 
     size_t sent = 0;
+    int stalled_ms = 0;
     while (sent < len) {
         /* MSG_DONTWAIT: a blocking send that hits SO_SNDTIMEO leaves lwIP with a dangling
          * pending write, and the next ACK crashes in lwip_netconn_do_writemore. */
         int n = send(sock->fd, (const uint8_t *)data + sent, len - sent, MSG_DONTWAIT);
         if (n <= 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            /* A peer that vanished without FIN/RST never drains the buffer; give up so the
+             * caller reconnects instead of spinning here forever. */
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) && stalled_ms < 5000) {
                 vTaskDelay(pdMS_TO_TICKS(10));
+                stalled_ms += 10;
                 continue;
             }
             ESP_LOGE(TAG, "TCP send failed: n=%d errno=%d (sent %d/%d)",
@@ -228,6 +232,7 @@ esp_err_t microlink_tcp_send(microlink_tcp_socket_t *sock, const void *data, siz
             return ESP_FAIL;
         }
         sent += n;
+        stalled_ms = 0;
     }
 
     return ESP_OK;
