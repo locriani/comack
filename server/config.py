@@ -53,7 +53,7 @@ class Settings(BaseModel):
     DEFAULT_LINES_WANTED: int = int(os.getenv("DEFAULT_LINES_WANTED", "8"))
 
     # Longest continuous speech chunk sent to Whisper (segments also end at pauses)
-    VAD_MAX_SEGMENT_SECONDS: float = float(os.getenv("VAD_MAX_SEGMENT_SECONDS", "60"))
+    VAD_MAX_SEGMENT_SECONDS: float = float(os.getenv("VAD_MAX_SEGMENT_SECONDS", "30"))
 
     # Stochastic Part-of-Speech "Differential Privacy" word scramble rate
     POS_SCRAMBLE_RATE: float = float(os.getenv("POS_SCRAMBLE_RATE", "0.10"))
