@@ -31,7 +31,7 @@ class Settings(BaseModel):
     PORT: int = int(os.getenv("PORT", "8000"))
     
     # llama.cpp server configuration
-    LLAMA_CPP_URL: str = os.getenv("LLAMA_CPP_URL", "http://comack-server.example-tailnet.ts.net:80/v1")
+    LLAMA_CPP_URL: str = os.getenv("LLAMA_CPP_URL", "http://comack-server.example-tailnet.ts.net:80/")
     LLAMA_CPP_MODEL: str = os.getenv("LLAMA_CPP_MODEL", "")
     
     # Whisper Speech-to-Text configuration
@@ -51,12 +51,12 @@ class Settings(BaseModel):
     ARC_MIN_HOURS: float = float(os.getenv("ARC_MIN_HOURS", "4.0"))
     ARC_MAX_HOURS: float = float(os.getenv("ARC_MAX_HOURS", "168.0"))  # 7 days
     
-    # FLUX.1 Image Generation Configuration
-    FLUX_MODEL_ID: str = os.getenv("FLUX_MODEL_ID", "black-forest-labs/FLUX.1-schnell")
+    # Image Generation Configuration (Defaults to fast 1-step SD-Turbo for immediate responsiveness)
+    FLUX_MODEL_ID: str = os.getenv("FLUX_MODEL_ID", "stabilityai/sd-turbo")
     FLUX_DEVICE: str = os.getenv("FLUX_DEVICE", "cuda")  # 'cuda', 'mps', or 'cpu'
-    FLUX_INFERENCE_STEPS: int = int(os.getenv("FLUX_INFERENCE_STEPS", "4"))
+    FLUX_INFERENCE_STEPS: int = int(os.getenv("FLUX_INFERENCE_STEPS", "1"))
     FLUX_GUIDANCE_SCALE: float = float(os.getenv("FLUX_GUIDANCE_SCALE", "0.0"))
-    FLUX_ENABLE_CPU_OFFLOAD: bool = os.getenv("FLUX_ENABLE_CPU_OFFLOAD", "true").lower() == "true"
+    FLUX_ENABLE_CPU_OFFLOAD: bool = os.getenv("FLUX_ENABLE_CPU_OFFLOAD", "false").lower() == "true"
     FLUX_API_URL: str = os.getenv("FLUX_API_URL", "") # Optional ComfyUI/external endpoint
     
     # E-paper display specs

@@ -19,14 +19,14 @@ _pipeline_failed = False
 
 
 def _load_flux_pipeline():
-    """Load the official black-forest-labs/FLUX.1-schnell pipeline."""
+    """Load the image generation pipeline (FLUX or SD-Turbo)."""
     global _pipeline, _pipeline_failed
     if _pipeline is not None or _pipeline_failed:
         return _pipeline
         
     try:
         import torch
-        from diffusers import FluxPipeline
+        from diffusers import FluxPipeline, AutoPipelineForText2Image
         
         token = os.getenv("HF_TOKEN")
         if not token:
@@ -34,32 +34,47 @@ def _load_flux_pipeline():
             if token_path.exists():
                 token = token_path.read_text().strip()
                 
-        logger.info(f"Loading official FLUX.1 model: '{settings.FLUX_MODEL_ID}' (token present: {bool(token)})...")
+        model_id = settings.FLUX_MODEL_ID
+        is_flux = "flux" in model_id.lower()
+        logger.info(f"Loading image model: '{model_id}' (is_flux={is_flux}, token present: {bool(token)})...")
         
-        # Load in bfloat16 for highest fidelity and memory balance
-        pipe = FluxPipeline.from_pretrained(
-            settings.FLUX_MODEL_ID,
-            torch_dtype=torch.bfloat16,
-            token=token
-        )
-        
-        # Enable CPU offload to coordinate between 24GB system RAM and GPU
-        if settings.FLUX_ENABLE_CPU_OFFLOAD and torch.cuda.is_available():
-            logger.info("Enabling CPU offload for FLUX.1...")
-            pipe.enable_model_cpu_offload()
-        elif torch.cuda.is_available() and settings.FLUX_DEVICE == "cuda":
-            pipe.to("cuda")
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            pipe.to("mps")
+        if is_flux:
+            pipe = FluxPipeline.from_pretrained(
+                model_id,
+                torch_dtype=torch.bfloat16,
+                token=token
+            )
+            if settings.FLUX_ENABLE_CPU_OFFLOAD and torch.cuda.is_available():
+                logger.info("Enabling CPU offload for FLUX...")
+                pipe.enable_model_cpu_offload()
+            elif torch.cuda.is_available() and settings.FLUX_DEVICE == "cuda":
+                pipe.to("cuda")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                pipe.to("mps")
+            else:
+                pipe.to("cpu")
         else:
-            pipe.to("cpu")
+            use_cuda = torch.cuda.is_available() and settings.FLUX_DEVICE == "cuda"
+            # fp16 only on the GPU; fp16 on CPU is ~10x slower than fp32.
+            pipe = AutoPipelineForText2Image.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16 if use_cuda else torch.float32,
+                variant="fp16" if use_cuda else None,
+                token=token
+            )
+            if use_cuda:
+                pipe.to("cuda")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                pipe.to("mps")
+            else:
+                pipe.to("cpu")
             
         _pipeline = pipe
-        logger.info("FLUX.1 [schnell] loaded successfully and ready for generation.")
+        logger.info(f"Model '{model_id}' loaded successfully and ready for generation.")
         return _pipeline
         
     except Exception as e:
-        logger.error(f"Failed to load FLUX.1 [schnell] pipeline: {e}")
+        logger.error(f"Failed to load image generation pipeline: {e}")
         _pipeline_failed = True
         return None
 
@@ -71,7 +86,7 @@ class FluxGenerator:
     def generate_panel_art(self, scene_description: str, target_size: Tuple[int, int],
                            genre: str = "Graphic Novel") -> Optional[Image.Image]:
         """
-        Generate black-and-white comic panel artwork using FLUX.1 [schnell].
+        Generate black-and-white comic panel artwork.
         :param scene_description: Visual description from the story engine
         :param target_size: (width, height) in pixels
         :param genre: Comic genre context
@@ -83,17 +98,31 @@ class FluxGenerator:
             if img:
                 return img
 
-        # 2. Local official FLUX.1 [schnell] pipeline
+        # 2. Local diffusion pipeline
         pipe = _load_flux_pipeline()
         if pipe is None:
             return None
             
         width, height = target_size
-        # Align dimensions to multiples of 16 for FLUX
-        gen_w = (width // 16) * 16
-        gen_h = (height // 16) * 16
-        gen_w = max(256, min(1024, gen_w))
-        gen_h = max(256, min(1024, gen_h))
+        model_id = settings.FLUX_MODEL_ID.lower()
+        is_flux = "flux" in model_id
+        is_turbo = "turbo" in model_id
+        
+        # Dimensions must align to model requirements
+        multiple = 16 if is_flux else 8
+        gen_w = (width // multiple) * multiple
+        gen_h = (height // multiple) * multiple
+        
+        if is_turbo:
+            gen_w = min(512, max(256, gen_w))
+            gen_h = min(512, max(256, gen_h))
+            steps = 1
+            guidance = 0.0
+        else:
+            gen_w = max(256, min(1024, gen_w))
+            gen_h = max(256, min(1024, gen_h))
+            steps = settings.FLUX_INFERENCE_STEPS
+            guidance = settings.FLUX_GUIDANCE_SCALE
         
         prompt = (
             f"1-bit monochrome e-ink comic panel, {genre} graphic novel style, "
@@ -106,15 +135,18 @@ class FluxGenerator:
         )
         
         try:
-            logger.info(f"Generating panel with FLUX.1 [schnell] ({gen_w}x{gen_h}, {settings.FLUX_INFERENCE_STEPS} steps)...")
-            result = pipe(
-                prompt=prompt,
-                width=gen_w,
-                height=gen_h,
-                num_inference_steps=settings.FLUX_INFERENCE_STEPS,
-                guidance_scale=settings.FLUX_GUIDANCE_SCALE,
-                max_sequence_length=256
-            )
+            logger.info(f"Generating panel with {settings.FLUX_MODEL_ID} ({gen_w}x{gen_h}, {steps} steps)...")
+            kwargs = {
+                "prompt": prompt,
+                "width": gen_w,
+                "height": gen_h,
+                "num_inference_steps": steps,
+                "guidance_scale": guidance,
+            }
+            if is_flux:
+                kwargs["max_sequence_length"] = 256
+                
+            result = pipe(**kwargs)
             raw_img = result.images[0]
             # Convert to grayscale and enhance contrast for clean 1-bit dithering
             from PIL import ImageOps, ImageEnhance
@@ -125,7 +157,7 @@ class FluxGenerator:
             # Resize exactly to panel target_size
             return gray_img.resize((width, height), Image.Resampling.LANCZOS)
         except Exception as e:
-            logger.error(f"Error during FLUX.1 panel generation: {e}")
+            logger.error(f"Error during panel generation: {e}")
             return None
 
     def _generate_via_api(self, prompt: str, target_size: Tuple[int, int]) -> Optional[Image.Image]:

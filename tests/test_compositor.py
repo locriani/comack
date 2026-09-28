@@ -45,6 +45,10 @@ class TestComicCompositor(unittest.TestCase):
         file_size = os.path.getsize(bin_path)
         self.assertEqual(file_size, 48000, f"Expected 48000 bytes for 800x480 e-paper, got {file_size}")
         
+        # 3. Bits must carry the image (1 = white): a mostly-white comic can't pack to all zeros
+        data = bin_path.read_bytes()
+        self.assertGreater(sum(bin(b).count("1") for b in data), 800 * 480 // 2)
+
         # Clean up test files
         if png_path.exists(): png_path.unlink()
         if bin_path.exists(): bin_path.unlink()

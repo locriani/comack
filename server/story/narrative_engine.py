@@ -154,12 +154,16 @@ TASK:
             "layout_type": script.get("layout_type", "2-panel"),
             "panel_count": len(script.get("panels", [])),
             "panels": script.get("panels", []),
-            "dialogue_used": dialogue_lines
+            "dialogue_used": mined_elements
         }
 
     async def _call_llama_cpp(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
         """Call llama.cpp OpenAI-compatible chat completion endpoint."""
-        url = f"{settings.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
+        base = settings.LLAMA_CPP_URL.rstrip('/')
+        if not base.endswith("/v1"):
+            url = f"{base}/v1/chat/completions"
+        else:
+            url = f"{base}/chat/completions"
         payload = {
             "model": settings.LLAMA_CPP_MODEL or "default",
             "messages": [
@@ -171,7 +175,8 @@ TASK:
         }
         
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
+            # Reasoning model with thinking on: generation can take minutes.
+            async with httpx.AsyncClient(timeout=600.0) as client:
                 logger.info(f"Sending prompt to llama.cpp at {url}")
                 resp = await client.post(url, json=payload)
                 if resp.status_code == 200:

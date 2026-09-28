@@ -68,23 +68,8 @@ def dither_to_1bit_monochrome(image: Image.Image) -> Tuple[Image.Image, bytes]:
     gray = ImageEnhance.Contrast(gray).enhance(1.2)
     dithered = gray.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
     
-    # Pack 800x480 1-bit image into raw bytes (1 bit per pixel, 100 bytes per row)
-    # EPD convention: 1 = White, 0 = Black
-    img_array = np.array(dithered, dtype=np.uint8) # 255 for white, 0 for black
-    packed_bytes = bytearray()
-    
-    for y in range(HEIGHT):
-        row = img_array[y]
-        for x in range(0, WIDTH, 8):
-            byte_val = 0
-            for bit in range(8):
-                if x + bit < WIDTH:
-                    pixel = row[x + bit]
-                    if pixel > 128: # White pixel -> 1
-                        byte_val |= (1 << (7 - bit))
-            packed_bytes.append(byte_val)
-            
-    return dithered, bytes(packed_bytes)
+    # Mode "1" tobytes() is already the EPD format: 1 bit/pixel, MSB first, 100 bytes/row, 1 = White
+    return dithered, dithered.tobytes()
 
 
 class ComicCompositor:
