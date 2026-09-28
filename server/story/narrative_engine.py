@@ -21,6 +21,14 @@ logger = logging.getLogger("comack.story")
 # Recent model prompts and outputs for the dashboard's debug view. The miner's prompts hold
 # the first-pass scrambled transcript, which may not be stored: this lives in memory only.
 prompt_log: deque = deque(maxlen=60)
+PROMPT_LOG_TTL_S = 15 * 60
+
+
+def expire_prompt_log():
+    """Forget calls made more than PROMPT_LOG_TTL_S ago (entries are in call order)."""
+    cutoff = time.time() - PROMPT_LOG_TTL_S
+    while prompt_log and prompt_log[0]["at"] < cutoff:
+        prompt_log.popleft()
 
 LAYOUT_MENU = "\n".join(f'   - "{name}" ({len(p)} panel{"s" * (len(p) > 1)}): {use}'
                         for name, (use, p) in LAYOUTS.items())

@@ -182,7 +182,7 @@
         <span id="promptCount" class="text-xs mono text-gray-400">0 calls</span>
       </div>
       <div id="promptList" class="max-h-[600px] overflow-y-auto space-y-1.5 text-xs mono">
-        <div class="text-gray-500 italic">No model calls since the server started.</div>
+        <div class="text-gray-500 italic">No model calls in the last 15 minutes.</div>
       </div>
     </div>
 
@@ -368,7 +368,11 @@
       try {
         const entries = await (await fetch('/api/prompts')).json();
         const list = document.getElementById('promptList');
-        if (entries.length === 0) return;
+        document.getElementById('promptCount').textContent = `${entries.length} calls`;
+        if (entries.length === 0) {
+          list.innerHTML = '<div class="text-gray-500 italic">No model calls in the last 15 minutes.</div>';
+          return;
+        }
         const open = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.at));
         list.replaceChildren(...entries.map(e => {
           const d = document.createElement('details');
@@ -391,7 +395,6 @@
           }
           return d;
         }));
-        document.getElementById('promptCount').textContent = `${entries.length} calls`;
       } catch (e) {
         console.error('Error loading prompts:', e);
       }

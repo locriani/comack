@@ -20,7 +20,7 @@ from server.audio.vad import AudioVAD, SpeechSegment
 from server.audio.transcriber import Transcriber, TriggerListener
 from server.privacy.thematic_miner import mine_sentences
 from server.privacy.pos_scrambler import pools
-from server.story.narrative_engine import narrative_engine, prompt_log
+from server.story.narrative_engine import narrative_engine, prompt_log, expire_prompt_log
 from server.render.comic_compositor import comic_compositor
 from server.dispatcher.sneaky_dispatcher import SneakyDispatcher
 
@@ -177,6 +177,13 @@ async def periodic_comic_scheduler():
             logger.error(f"Error in periodic comic scheduler: {e}")
 
 
+async def periodic_prompt_log_expiry():
+    """Debug prompt log entries are gone within 30s of turning 15 minutes old."""
+    while True:
+        await asyncio.sleep(30)
+        expire_prompt_log()
+
+
 async def periodic_transcription():
     """Every PROCESS_INTERVAL_MINUTES: transcribe the buffered speech, scramble, mine and store."""
     while True:
@@ -234,6 +241,7 @@ async def lifespan(app: FastAPI):
 
     cycle_task = asyncio.create_task(periodic_comic_scheduler())
     transcribe_task = asyncio.create_task(periodic_transcription())
+    expiry_task = asyncio.create_task(periodic_prompt_log_expiry())
     asyncio.create_task(asyncio.to_thread(pools))  # build scrambler word pools off the event loop
     
     yield
@@ -241,6 +249,7 @@ async def lifespan(app: FastAPI):
     # Teardown
     sneaky_dispatcher.stop()
     transcribe_task.cancel()  # ponytail: up to one interval of unprocessed speech is dropped on restart
+    expiry_task.cancel()
     if cycle_task:
         cycle_task.cancel()
 
@@ -414,7 +423,8 @@ async def get_recent_transcripts():
 
 @app.get("/api/prompts")
 async def get_prompts():
-    """Recent LLM and image prompts with their outputs, newest first (memory only)."""
+    """LLM and image prompts from the last 15 minutes with their outputs, newest first (memory only)."""
+    expire_prompt_log()
     return list(reversed(prompt_log))
 
 
