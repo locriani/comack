@@ -11,7 +11,8 @@ nltk>=3.9  # POS tagger for the privacy scrambler
 
 # FLUX.1 & Speech AI Dependencies (for comack-server)
 torch>=2.2.0
-diffusers>=0.30.0
+diffusers>=0.32.0  # GGUF-quantized FLUX transformer
+gguf>=0.10.0
 transformers>=4.40.0
 accelerate>=0.28.0
 sentencepiece>=0.1.99

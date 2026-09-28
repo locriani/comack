@@ -47,8 +47,8 @@ async def mine_sentences(scrambled: str) -> List[str]:
 For EACH sentence, in order, write:
 - "vibe": its emotional vibe in at most 3 words
 - "energy": "low", "medium", or "high"
-- "content": one short surreal comic line (max 20 words) riffing on the sentence, keeping its key words.
-  It MUST be a single coherent, grammatical English sentence that makes sense on its own.
+- "content": a surreal comic line riffing on the sentence, keeping its key words.
+  It MUST be coherent, grammatical English that makes sense on its own.
 Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} with exactly {len(sentences)} entries."""
     result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
     items = (result or {}).get("sentences") or []

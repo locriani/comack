@@ -67,7 +67,10 @@ class Settings(BaseModel):
     FLUX_DEVICE: str = os.getenv("FLUX_DEVICE", "cuda")  # 'cuda', 'mps', or 'cpu'
     FLUX_INFERENCE_STEPS: int = int(os.getenv("FLUX_INFERENCE_STEPS", "1"))
     FLUX_GUIDANCE_SCALE: float = float(os.getenv("FLUX_GUIDANCE_SCALE", "0.0"))
-    FLUX_ENABLE_CPU_OFFLOAD: bool = os.getenv("FLUX_ENABLE_CPU_OFFLOAD", "false").lower() == "true"
+    FLUX_GGUF_URL: str = os.getenv(
+        "FLUX_GGUF_URL", "https://huggingface.co/city96/FLUX.1-schnell-gguf/blob/main/flux1-schnell-Q4_K_S.gguf")
+    FLUX_MIN_FREE_VRAM_GB: float = float(os.getenv("FLUX_MIN_FREE_VRAM_GB", "10.5"))
+    FLUX_VRAM_WAIT_SECONDS: float = float(os.getenv("FLUX_VRAM_WAIT_SECONDS", "180"))
     FLUX_API_URL: str = os.getenv("FLUX_API_URL", "") # Optional ComfyUI/external endpoint
     
     # E-paper display specs

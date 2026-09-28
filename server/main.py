@@ -70,7 +70,8 @@ async def run_comic_generation_cycle() -> Dict[str, Any]:
     script = await narrative_engine.generate_comic_script(unprocessed)
     
     # 3. Render and dither 800x480 comic image + 48,000-byte bin
-    png_path, bin_path = comic_compositor.compose_comic(script)
+    # Off the event loop: FLUX waits for VRAM and renders for minutes; audio must keep flowing.
+    png_path, bin_path = await asyncio.to_thread(comic_compositor.compose_comic, script)
     
     # 4. Save comic into database
     comic_id = db.save_comic(

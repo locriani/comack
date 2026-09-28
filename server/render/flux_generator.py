@@ -5,6 +5,7 @@ high-contrast graphic novel panel illustrations.
 """
 import io
 import os
+import time
 import logging
 from typing import Optional, Tuple
 from pathlib import Path
@@ -39,20 +40,20 @@ def _load_flux_pipeline():
         logger.info(f"Loading image model: '{model_id}' (is_flux={is_flux}, token present: {bool(token)})...")
         
         if is_flux:
-            pipe = FluxPipeline.from_pretrained(
-                model_id,
+            from diffusers import FluxTransformer2DModel, GGUFQuantizationConfig
+            # 4-bit GGUF transformer (6.8 GB) instead of the 24 GB bf16 one; the text
+            # encoders and VAE come from the official repo. Model CPU offload keeps only one
+            # component on the GPU at a time (peak ~10 GB: the T5 encoder).
+            transformer = FluxTransformer2DModel.from_single_file(
+                settings.FLUX_GGUF_URL,
+                quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
                 torch_dtype=torch.bfloat16,
-                token=token
+                config=model_id, subfolder="transformer", token=token
             )
-            if settings.FLUX_ENABLE_CPU_OFFLOAD and torch.cuda.is_available():
-                logger.info("Enabling CPU offload for FLUX...")
-                pipe.enable_model_cpu_offload()
-            elif torch.cuda.is_available() and settings.FLUX_DEVICE == "cuda":
-                pipe.to("cuda")
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                pipe.to("mps")
-            else:
-                pipe.to("cpu")
+            pipe = FluxPipeline.from_pretrained(
+                model_id, transformer=transformer, torch_dtype=torch.bfloat16, token=token
+            )
+            pipe.enable_model_cpu_offload()
         else:
             use_cuda = torch.cuda.is_available() and settings.FLUX_DEVICE == "cuda"
             # fp16 only on the GPU; fp16 on CPU is ~10x slower than fp32.
@@ -79,6 +80,35 @@ def _load_flux_pipeline():
         return None
 
 
+def _wait_for_vram(min_free_gb: float, timeout_s: float) -> bool:
+    """The 26B LLM holds ~11 GB of the 12 GB GPU while awake and sleeps 60s after its last
+    request. Wait for it instead of fighting it for memory."""
+    import torch
+    deadline = time.time() + timeout_s
+    while True:
+        free_gb = torch.cuda.mem_get_info()[0] / 1e9
+        if free_gb >= min_free_gb:
+            return True
+        if time.time() >= deadline:
+            logger.warning(f"Only {free_gb:.1f} GB VRAM free after {timeout_s:.0f}s; skipping FLUX for this panel.")
+            return False
+        time.sleep(5)
+
+
+def release_pipeline():
+    """Free the pipeline after a comic (~17 GB of RAM while loaded; comics are minutes apart)."""
+    global _pipeline
+    if _pipeline is None:
+        return
+    _pipeline = None
+    import gc
+    import torch
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    logger.info("Image pipeline released.")
+
+
 class FluxGenerator:
     def __init__(self):
         pass
@@ -99,21 +129,30 @@ class FluxGenerator:
                 return img
 
         # 2. Local diffusion pipeline
-        pipe = _load_flux_pipeline()
-        if pipe is None:
-            return None
-            
         width, height = target_size
         model_id = settings.FLUX_MODEL_ID.lower()
         is_flux = "flux" in model_id
         is_turbo = "turbo" in model_id
-        
+
+        if is_flux and not _wait_for_vram(settings.FLUX_MIN_FREE_VRAM_GB, settings.FLUX_VRAM_WAIT_SECONDS):
+            return None
+        pipe = _load_flux_pipeline()
+        if pipe is None:
+            return None
+
         # Dimensions must align to model requirements
         multiple = 16 if is_flux else 8
         gen_w = (width // multiple) * multiple
         gen_h = (height // multiple) * multiple
-        
-        if is_turbo:
+
+        if is_flux:
+            # schnell: 4 steps, no guidance; render up to 2x (max 1024 px side) and downscale.
+            scale = min(2.0, 1024 / max(width, height))
+            gen_w = int(width * scale) // 16 * 16
+            gen_h = int(height * scale) // 16 * 16
+            steps = 4
+            guidance = 0.0
+        elif is_turbo:
             gen_w = min(512, max(256, gen_w))
             gen_h = min(512, max(256, gen_h))
             steps = 1
@@ -124,7 +163,7 @@ class FluxGenerator:
             steps = settings.FLUX_INFERENCE_STEPS
             guidance = settings.FLUX_GUIDANCE_SCALE
         
-        # SD-Turbo's CLIP encoder reads only 77 tokens: short style prefix first, then the scene.
+        # Short style prefix first: SD-Turbo's CLIP reads only 77 tokens (FLUX's T5 reads 512).
         prompt = (
             f"black and white ink comic panel, bold outlines, high contrast, solid blacks, "
             f"crosshatching, no gray: {scene_description}"
@@ -140,7 +179,7 @@ class FluxGenerator:
                 "guidance_scale": guidance,
             }
             if is_flux:
-                kwargs["max_sequence_length"] = 256
+                kwargs["max_sequence_length"] = 512
                 
             result = pipe(**kwargs)
             raw_img = result.images[0]

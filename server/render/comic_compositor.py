@@ -127,7 +127,9 @@ class ComicCompositor:
         for i, box in enumerate(panel_boxes):
             panel_data = panels[i] if i < len(panels) else {}
             self._render_panel(canvas, draw, box, panel_data, i, num_panels)
-            
+        from server.render.flux_generator import release_pipeline
+        release_pipeline()
+
         # 4. Dither and Export
         dithered_img, bin_bytes = dither_to_1bit_monochrome(canvas)
         

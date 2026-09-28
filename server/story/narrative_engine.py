@@ -191,7 +191,7 @@ TASK:
   "panels": [
     {{
       "panel_number": 1,
-      "scene_description": "At most 35 words, most important subject first: characters, action, setting, stark shadows",
+      "scene_description": "Most important subject first: characters, action, setting, stark shadows, crosshatching",
       "narration": "Optional caption box text (e.g. 'Meanwhile, in Sector 9...')",
       "speech_balloons": [
         {{"character": "Character Name", "text": "Dialogue built from the room notes"}}
