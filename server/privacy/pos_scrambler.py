@@ -27,7 +27,7 @@ BLOCKLIST = {
     "negro", "negroes", "nigger", "niggers", "savage", "savages", "bastard", "bastards",
     "retarded", "retard", "queer", "bitch", "gypsy", "gypsies", "crackers", "japs", "injun",
     "injuns", "coons", "whore", "whores", "hun", "dyke", "kraut", "krauts", "paddies", "mick",
-    "cripple", "spic", "squaw", "wop", "wops", "blackman"
+    "cripple", "spic", "squaw", "wop", "wops", "blackman", "whitey"
 }
 
 # Only prepositions that rarely act as conjunctions ("for", "after", "since" often do), so a
