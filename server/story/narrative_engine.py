@@ -47,7 +47,7 @@ def arc_bible_prompt(past_arcs: List[Dict[str, Any]]) -> str:
 {chr(10).join(past) or "- (none yet)"}
 
 Invent a completely new comic series. Draw from the whole range of comics and storytelling:
-any genre, era, audience, and kind of humor or drama. Avoid deadpan melodrama and film noir.
+any genre, era, audience, and kind of humor or drama.
 It is drawn in black and white on a 1-bit e-ink screen, so pick an art style that survives that.
 Output: {{"title": "the series title", "genre": "a few words", "premise": "one or two sentences",
 "tone": "how the story is told: voice, kind of humor or drama, how the characters behave",
