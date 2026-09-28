@@ -15,6 +15,7 @@ class TestPOSScrambler(unittest.TestCase):
         # Grammar words stay put
         self.assertIsNone(_replacement("that", "IN"))    # conjunction, not a preposition
         self.assertIsNone(_replacement("was", "VBD"))    # auxiliary
+        self.assertIsNone(_replacement("Can", "NNP"))    # tagger slip on a sentence-initial modal
         self.assertIsNone(_replacement("very", "RB"))    # not an -ly adverb
         self.assertIsNone(_replacement("don't", "VBP"))
 

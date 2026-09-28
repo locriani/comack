@@ -62,10 +62,12 @@ PREPOSITIONS = {
     "towards", "under", "underneath", "upon", "with", "within", "without"
 }
 
-# be / have / do / get forms carry grammar, not content.
+# be / have / do / get forms and modals carry grammar, not content. Never swapped, whatever
+# the tagger says (it tags a sentence-initial "Can" as a proper noun).
 AUXILIARIES = {
     "be", "am", "is", "are", "was", "were", "been", "being", "have", "has", "had",
-    "having", "do", "does", "did", "doing", "done", "get", "gets", "got", "gotten", "getting"
+    "having", "do", "does", "did", "doing", "done", "get", "gets", "got", "gotten", "getting",
+    "can", "could", "will", "would", "shall", "should", "may", "might", "must"
 }
 
 VERB_FORMS = {"VB": "base", "VBP": "base", "VBD": "ed", "VBN": "ed", "VBG": "ing", "VBZ": "s"}
@@ -97,7 +99,7 @@ def _tag(words: List[str]) -> List[Tuple[str, str]]:
 def _replacement(word: str, tag: str) -> Optional[str]:
     """A random word with the same part of speech, or None if this word must not be swapped."""
     w = word.lower()
-    if "'" in w:
+    if "'" in w or w in AUXILIARIES:
         return None
     if tag == "NN":
         return random.choice(ABSURD_NOUNS)
@@ -105,7 +107,7 @@ def _replacement(word: str, tag: str) -> Optional[str]:
         return _pluralize(random.choice(ABSURD_NOUNS))
     if tag in ("NNP", "NNPS"):
         return random.choice(ABSURD_PROPER_NOUNS)
-    if tag in VERB_FORMS and w not in AUXILIARIES:
+    if tag in VERB_FORMS:
         return _conjugate_verb(random.choice(ABSURD_VERBS_BASE), VERB_FORMS[tag])
     if tag == "JJ":
         return random.choice(ABSURD_ADJECTIVES)
