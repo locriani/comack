@@ -2,7 +2,7 @@
 Story element miner.
 [audio] -> [transcribe] -> [25% swap + digit swap] -> HERE: [miner LLM pass 1]
   -> [25% swap + digit swap] -> [miner LLM pass 2] -> [LLM smoothing ("Comic lines")] -> stored.
-The scrambled transcript itself is never stored; only these generated, re-scrambled lines are.
+The scrambled transcript itself is never stored; only lines that made it through every pass are.
 """
 import re
 import asyncio
@@ -22,24 +22,39 @@ SYSTEM_PROMPT = (
     "Output ONLY valid JSON."
 )
 
+MINE_TASK = """For EACH sentence, in order, write:
+- "vibe": its emotional vibe in at most 3 words
+- "energy": "low", "medium", or "high"
+- "content": a surreal comic line riffing on the sentence, keeping its key words.
+  It MUST be coherent, grammatical English that makes sense on its own."""
+
+SMOOTH_TASK = """For EACH line, in order, write:
+- "vibe" and "energy": the ones in its [VIBE • ENERGY] tag
+- "content": the line rewritten as coherent, grammatical English that makes sense on its own.
+  Keep its words (including the odd ones) and its absurdity; change only what grammar needs."""
+
 
 def split_sentences(text: str) -> List[str]:
     return [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
 
 
-def format_row(item: dict, content: str) -> str:
+def _content(item: dict) -> str:
+    return str(item.get("content") or "").strip()
+
+
+def format_row(item: dict) -> str:
     """`[VIBE • ENERGY] content`."""
     vibe = " ".join(str(item.get("vibe") or "deadpan").split()[:3]).upper()
     energy = str(item.get("energy", "")).lower()
     energy = energy if energy in ENERGIES else "medium"
-    return f"[{vibe} • {energy.upper()}] {content}"
+    return f"[{vibe} • {energy.upper()}] {_content(item)}"
 
 
 BATCH_SENTENCES = 12  # a 5-minute transcript would overflow the small miner model's context
 
 
 async def mine_sentences(scrambled: str) -> List[str]:
-    """Returns one stored row per detected sentence, BATCH_SENTENCES per LLM call."""
+    """Returns one stored row per sentence that survives every pass, BATCH_SENTENCES at a time."""
     sentences = split_sentences(scrambled)
     rows = []
     for i in range(0, len(sentences), BATCH_SENTENCES):
@@ -48,61 +63,31 @@ async def mine_sentences(scrambled: str) -> List[str]:
 
 
 async def _mine_batch(sentences: List[str]) -> List[str]:
-    first = await _mine(sentences)
-    if not first:
-        # ponytail: LLM down = these sentences are dropped; add a local fallback if outages are common.
-        logger.warning(f"Miner got no LLM content; dropped {len(sentences)} sentence(s).")
-        return []
+    """Mine, scramble, mine again, smooth. The passes are part of the privacy transform, so a line
+    any pass fails to produce is dropped, never stored in a less-transformed state."""
+    first = await _llm_pass("Overheard sentences:", MINE_TASK, sentences)
     # Second scramble (POS swap + digit swap) is CPU work: keep it off the event loop
-    lines = await asyncio.to_thread(
+    scrambled = await asyncio.to_thread(
         lambda: [scramble_text(_content(i), settings.POS_SCRAMBLE_RATE) for i in first])
-    second = await _mine(lines)
-    if len(second) != len(lines):
-        # The scrambled lines are already private; they just skip the second riff.
-        logger.warning("Second mining pass got no usable LLM output; keeping the scrambled first pass.")
-        second = [{**i, "content": line} for i, line in zip(first, lines)]
-    smoothed = await _smooth([_content(i) for i in second])
-    return [format_row(i, line) for i, line in zip(second, smoothed)]
+    second = await _llm_pass("Overheard sentences:", MINE_TASK, scrambled)
+    final = await _llm_pass("Comic lines:", SMOOTH_TASK, [format_row(i) for i in second])
+    if len(final) < len(sentences):
+        logger.warning(f"Miner dropped {len(sentences) - len(final)} of {len(sentences)} line(s): a model pass failed.")
+    return [format_row(i) for i in final]
 
 
-def _content(item: dict) -> str:
-    return str(item.get("content") or "")
-
-
-async def _mine(sentences: List[str]) -> List[dict]:
-    """One miner LLM call: a {vibe, energy, content} dict per sentence (fewer if the model misbehaves)."""
+async def _llm_pass(header: str, task: str, inputs: List[str]) -> List[dict]:
+    """One miner LLM call: a {vibe, energy, content} dict per input, in order. Entries the model
+    skips or leaves empty are missing; a failed call returns []."""
+    if not inputs:
+        return []
     from server.story.narrative_engine import narrative_engine
-    numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
-    prompt = f"""Overheard sentences:
+    numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(inputs))
+    prompt = f"""{header}
 {numbered}
 
-For EACH sentence, in order, write:
-- "vibe": its emotional vibe in at most 3 words
-- "energy": "low", "medium", or "high"
-- "content": a surreal comic line riffing on the sentence, keeping its key words.
-  It MUST be coherent, grammatical English that makes sense on its own.
-Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} with exactly {len(sentences)} entries."""
+{task}
+Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} with exactly {len(inputs)} entries."""
     result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
     items = (result or {}).get("sentences") or []
-    return [i for i in items[:len(sentences)] if isinstance(i, dict)]
-
-
-async def _smooth(lines: List[str]) -> List[str]:
-    """Final LLM pass: the re-scrambled lines, rewritten to read as coherent English again."""
-    if not lines:
-        return lines
-    from server.story.narrative_engine import narrative_engine
-    numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(lines))
-    prompt = f"""Comic lines:
-{numbered}
-
-Rewrite each line, in order, as coherent, grammatical English that makes sense on its own.
-Keep its words (including the odd ones) and its absurdity; change only what grammar needs.
-Output: {{"lines": ["..."]}} with exactly {len(lines)} entries."""
-    result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
-    out = (result or {}).get("lines") or []
-    if len(out) != len(lines) or not all(isinstance(s, str) and s.strip() for s in out):
-        # The scrambled lines are already private; they just read rougher.
-        logger.warning("Smoothing pass got no usable LLM output; storing the scrambled lines.")
-        return lines
-    return [s.strip() for s in out]
+    return [i for i in items[:len(inputs)] if isinstance(i, dict) and _content(i)]
