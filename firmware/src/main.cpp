@@ -129,15 +129,15 @@ static uint32_t resolve_server(void) {
     return ip ? ip : microlink_parse_ip(COMACK_SERVER_HOST);
 }
 
-// HTTP GET over the tunnel; copies up to `cap` body bytes into `out`.
+// Bodiless HTTP request over the tunnel; copies up to `cap` body bytes into `out`.
 // Returns body bytes read, -1 if the connection failed.
-static int http_get(uint32_t ip, const char *path, uint8_t *out, size_t cap) {
+static int http_request(uint32_t ip, const char *method, const char *path, uint8_t *out, size_t cap) {
     microlink_tcp_socket_t *sock = microlink_tcp_connect(ml, ip, COMACK_SERVER_PORT, 10000);
     if (!sock) return -1;
 
-    char req[160];
-    int n = snprintf(req, sizeof(req), "GET %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
-                     path, COMACK_SERVER_HOST, COMACK_SERVER_PORT);
+    char req[192];
+    int n = snprintf(req, sizeof(req), "%s %s HTTP/1.1\r\nHost: %s:%d\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                     method, path, COMACK_SERVER_HOST, COMACK_SERVER_PORT);
     microlink_tcp_send(sock, req, n);
 
     size_t body = 0;
@@ -162,7 +162,7 @@ static bool download_and_refresh_comic(uint32_t ip, int issue) {
     char path[40];
     snprintf(path, sizeof(path), "/api/comics/%d/bin", issue);
     ESP_LOGI(TAG, "Fetching comic #%d from %s...", issue, COMACK_SERVER_HOST);
-    int got = http_get(ip, path, epdFrameBuffer, EPD_BUFFER_BYTES);
+    int got = http_request(ip, "GET", path, epdFrameBuffer, EPD_BUFFER_BYTES);
     if (got != EPD_BUFFER_BYTES) {
         ESP_LOGW(TAG, "Incomplete comic binary: %d / %d bytes", got, EPD_BUFFER_BYTES);
         return false;
@@ -301,7 +301,7 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "MagicDNS resolved '%s' -> %s", COMACK_SERVER_HOST, resolved_ip_str);
 
     gpio_config_t btn = {};
-    btn.pin_bit_mask = (1ULL << PIN_BTN_FWD) | (1ULL << PIN_BTN_BACK);
+    btn.pin_bit_mask = (1ULL << PIN_BTN_FWD) | (1ULL << PIN_BTN_BACK) | (1ULL << PIN_BTN_TRIGGER);
     btn.mode = GPIO_MODE_INPUT;
     btn.pull_up_en = GPIO_PULLUP_ENABLE;
     gpio_config(&btn);
@@ -311,14 +311,14 @@ extern "C" void app_main(void) {
     // Buttons browse older issues; after BROWSE_TIMEOUT_MS idle we snap back to the latest.
     int latest = -1, shown = -1;
     int64_t next_poll_us = 0, browse_until_us = 0;
-    bool fwd_was = false, back_was = false;
+    bool fwd_was = false, back_was = false, trig_was = false;
     while (true) {
         int64_t now = esp_timer_get_time();
 
         if (now >= next_poll_us) {
             next_poll_us = now + 10000 * 1000LL;
             uint8_t buf[256];
-            int n = http_get(comack-server_ip, "/api/comics/current", buf, sizeof(buf) - 1);
+            int n = http_request(comack-server_ip, "GET", "/api/comics/current", buf, sizeof(buf) - 1);
             if (n > 0) {
                 buf[n] = 0;
                 const char *p = strstr((const char *)buf, "\"issue_number\":");
@@ -337,6 +337,16 @@ extern "C" void app_main(void) {
         int step = (fwd && !fwd_was) ? 1 : (back && !back_was) ? -1 : 0;
         fwd_was = fwd;
         back_was = back;
+
+        bool trig = gpio_get_level((gpio_num_t)PIN_BTN_TRIGGER) == 0;
+        if (trig && !trig_was) {
+            ESP_LOGI(TAG, "Button: trigger");
+            uint8_t ignored[64];
+            http_request(comack-server_ip, "POST", "/api/trigger", ignored, sizeof(ignored));
+            browse_until_us = 0;                            // stop browsing, show the new comic
+            next_poll_us = esp_timer_get_time() + 2000 * 1000LL;  // a held comic is revealed at once
+        }
+        trig_was = trig;
 
         if (step && shown > 0) {
             browse_until_us = esp_timer_get_time() + BROWSE_TIMEOUT_MS * 1000LL;

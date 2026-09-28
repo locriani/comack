@@ -45,6 +45,7 @@ typedef struct {
 // Front buttons (active LOW, internal pull-up)
 #define PIN_BTN_FWD         4   // Right white button: next comic
 #define PIN_BTN_BACK        5   // Left white button: previous comic
+#define PIN_BTN_TRIGGER     3   // Green button (KEY0): same as saying the trigger phrase
 #define BROWSE_TIMEOUT_MS   60000 // Return to latest after this long without a press
 
 // Power & Battery Measurement
