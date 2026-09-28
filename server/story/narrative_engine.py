@@ -13,6 +13,7 @@ import httpx
 from typing import Dict, Any, List, Optional
 from server.config import settings
 from server.storage import db
+from server.privacy.pos_scrambler import ABSURD_ADJECTIVES, ABSURD_NOUNS
 
 logger = logging.getLogger("comack.story")
 
@@ -27,7 +28,27 @@ ARC_GENRES = [
     "Culinary Occult Sci-Fi",
     "1970s Disco Espionage",
     "Post-Apocalyptic Etiquette Guide",
-    "Time-Traveling Jazz Tragedy"
+    "Time-Traveling Jazz Tragedy",
+    "Suburban Kaiju Sitcom",
+    "Medieval Tech Support Epic",
+    "Deep-Sea Corporate Thriller",
+    "Haunted Strip-Mall Western",
+    "Interdimensional Cooking Competition",
+    "Gothic Romance Among Office Supplies",
+    "Antarctic Heist Caper",
+    "Prehistoric Courtroom Drama",
+    "Lunar Colony Farce",
+    "Pirate Radio Revolution",
+    "Clockwork Detective Procedural",
+    "Nature Documentary Gone Rogue",
+    "Retirement-Home Superhero Saga",
+    "Noir Musical of Sentient Weather",
+    "Espionage at the County Fair",
+    "Cosmic Horror HOA Meeting",
+    "Wizard Academy Budget Crisis",
+    "Soviet-Era Space Sitcom",
+    "Mythological Road Trip",
+    "Dinner-Party Murder Mystery Aboard a Zeppelin"
 ]
 
 PREMISE_SEEDS = [
@@ -36,8 +57,36 @@ PREMISE_SEEDS = [
     "A team of clandestine underground botanists must deliver the world's last sarcastic fern to Neo-Chicago.",
     "Two Victorian inventors keep accidentally inventing kitchen appliances that open portals to the year 3042.",
     "A crew of deep-sea submariners discovers that the ocean floor is made entirely of unreturned library books.",
-    "An unhinged weather forecaster realizes that the clouds are spelling out petty office gossip in Morse code."
+    "An unhinged weather forecaster realizes that the clouds are spelling out petty office gossip in Morse code.",
+    "A lighthouse keeper discovers the lighthouse has been quietly unionizing the seagulls.",
+    "The last working vending machine on Earth demands tribute before dispensing snacks.",
+    "A retired dragon opens a strictly unlicensed dental practice in a suburban garage.",
+    "A committee of ghosts cannot agree on how to haunt a house with an open-plan layout.",
+    "An elevator in a 90-story tower has declared independence between floors 42 and 43.",
+    "Two rival mimes are forced to share a single invisible box for the rest of their lives.",
+    "A diner's jukebox only plays songs from next week, and they are getting worse.",
+    "A houseplant is elected mayor on a technicality and takes the job very seriously.",
+    "A time-traveling accountant keeps getting audited by his own future self.",
+    "A haunted Roomba maps the house and finds a room nobody has ever seen.",
+    "A small-town bakery accidentally bakes a loaf of sourdough that achieves sentience.",
+    "The moon files a formal noise complaint against the tides.",
+    "An elite squad of retired librarians is reactivated to shush an approaching comet.",
+    "A pigeon courier network is the only thing standing between the city and total chaos.",
+    "A cursed karaoke machine forces anyone who sings to tell the truth.",
+    "The world's most boring superhero must stop a villain powered by excitement.",
+    "An IKEA showroom turns out to be infinitely large, and a family is lost inside it.",
+    "A washed-up magician's rabbit is finally ready to go solo.",
+    "A submarine crew realizes their periscope only shows reruns of 1970s game shows.",
+    "Every clock in town starts running on a different, strongly held opinion of time."
 ]
+
+
+def lines_wanted(script: Dict[str, Any]) -> int:
+    """The LLM's requested room-note count for the next issue, clamped to 1-30."""
+    try:
+        return max(1, min(30, int(script.get("lines_wanted_next"))))
+    except (TypeError, ValueError):
+        return settings.DEFAULT_LINES_WANTED
 
 
 def story_so_far(comics: List[Dict[str, Any]]) -> str:
@@ -62,35 +111,26 @@ class NarrativeEngine:
     async def get_or_create_active_arc(self) -> Dict[str, Any]:
         """Fetch the current active story arc or seed a new one if expired/absent."""
         arc = db.get_active_arc()
-        now = time.time()
-        
         if arc:
-            started_at = arc["started_at"]
-            target_hours = arc["target_duration_hours"]
-            elapsed_hours = (now - started_at) / 3600.0
-            
-            # Check if current arc has naturally expired
-            if elapsed_hours >= target_hours:
-                logger.info(f"Arc '{arc['title']}' completed after {elapsed_hours:.1f} hours. Seeding new arc.")
-                db.conclude_arc(arc["id"])
-                arc = None
-            else:
+            used = sum(c["panel_count"] for c in db.get_arc_comics(arc["id"]))
+            if used < arc["target_panels"]:
                 return arc
-                
-        # Generate a new story arc seed (between 4 hours and 7 days)
-        duration_hours = random.uniform(settings.ARC_MIN_HOURS, settings.ARC_MAX_HOURS)
+            logger.info(f"Arc '{arc['title']}' completed after {used} panels. Seeding new arc.")
+            db.conclude_arc(arc["id"])
+
+        target_panels = random.randint(settings.ARC_MIN_PANELS, settings.ARC_MAX_PANELS)
         genre = random.choice(ARC_GENRES)
         premise = random.choice(PREMISE_SEEDS)
-        title = f"The {genre} Chronicles"
-        
+        title = f"The {random.choice(ABSURD_ADJECTIVES).title()} {random.choice(ABSURD_NOUNS).title()}"
+
         arc_id = db.create_arc(
             title=title,
             genre=genre,
             premise=premise,
-            target_duration_hours=round(duration_hours, 1),
+            target_panels=target_panels,
             metadata={"created_seed": premise}
         )
-        logger.info(f"New story arc #{arc_id} seeded: '{title}' ({genre}), Target duration: {duration_hours:.1f}h")
+        logger.info(f"New story arc #{arc_id} seeded: '{title}' ({genre}), target {target_panels} panels")
         return db.get_active_arc()
 
     async def generate_comic_script(self, transcript_items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -101,14 +141,13 @@ class NarrativeEngine:
         arc = await self.get_or_create_active_arc()
         issue_number = db.get_next_issue_number()
         
-        # Calculate how far through the arc we are
-        now = time.time()
-        elapsed_hours = (now - arc["started_at"]) / 3600.0
-        arc_progress = min(1.0, elapsed_hours / max(1.0, arc["target_duration_hours"]))
-        
+        arc_comics = db.get_arc_comics(arc["id"])
+        panels_used = sum(c["panel_count"] for c in arc_comics)
+        arc_progress = min(1.0, panels_used / arc["target_panels"])
+
         mined_elements = [item["scrambled_text"] for item in transcript_items if item.get("scrambled_text")]
-        # ponytail: last 50 issues keeps the prompt bounded (~15k tokens); summarize older ones if the plot drifts.
-        history = story_so_far(db.get_recent_comics(50)[::-1])
+        # Arcs are capped at ARC_MAX_PANELS, which keeps this bounded.
+        history = story_so_far(arc_comics)
         history_section = (
             "Story So Far (text of every previous issue, oldest first). Continue this plot directly: "
             f"keep the same characters, running jokes, and unresolved threads:\n{history}\n\n"
@@ -128,10 +167,10 @@ class NarrativeEngine:
 Current Narrative Arc #{arc['id']}: '{arc['title']}'
 Genre: {arc['genre']}
 Arc Premise: {arc['premise']}
-Arc Progress: {arc_progress * 100:.1f}% (Hour {elapsed_hours:.1f} of {arc['target_duration_hours']}h)
+Arc Progress: {arc_progress * 100:.1f}% ({panels_used} of {arc['target_panels']} panels drawn)
 Issue Number: #{issue_number}
 
-{history_section}Room notes from the past 30 minutes ([VIBE • ENERGY] line):
+{history_section}Room notes since the last issue ([VIBE • ENERGY] line):
 {json.dumps(mined_elements, indent=2) if mined_elements else '["(Eerie room silence... only the ambient hum of quantum machinery)"]'}
 
 TASK:
@@ -143,7 +182,9 @@ TASK:
    - Emphasize bold silhouettes, strong foreground/background contrast, and distinct outlines.
    - Describe scenes with stark black shadows, bright white highlights, crosshatching, halftone dots, or woodcut engraving textures.
    - Avoid subtle color nuances, smoky haze, or smooth gray gradients that turn into muddy noise when dithered to 1-bit.
-4. Output STRICT JSON in this exact structure:
+4. Decide how many room notes to collect before the next issue ("lines_wanted_next", 1-30):
+   fewer for a fast, punchy beat; more to let the next issue build from a richer stretch of the room.
+5. Output STRICT JSON in this exact structure:
 {{
   "title": "A witty, deadpan issue title",
   "layout_type": "1-panel" | "2-panel" | "3-panel",
@@ -158,6 +199,7 @@ TASK:
       "sound_effect": "Optional comic SFX e.g. 'BZZZZT' or 'CLICK'"
     }}
   ],
+  "lines_wanted_next": 8,
   "arc_status": "CONTINUE"
 }}
 """
@@ -175,12 +217,13 @@ TASK:
             "layout_type": script.get("layout_type", "2-panel"),
             "panel_count": len(script.get("panels", [])),
             "panels": script.get("panels", []),
+            "lines_wanted_next": lines_wanted(script),
             "dialogue_used": mined_elements
         }
 
-    async def _call_llama_cpp(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
-        """Call llama.cpp OpenAI-compatible chat completion endpoint."""
-        base = settings.LLAMA_CPP_URL.rstrip('/')
+    async def _call_llama_cpp(self, system_prompt: str, user_prompt: str, base_url: str = "") -> Optional[Dict[str, Any]]:
+        """Call llama.cpp OpenAI-compatible chat completion endpoint (default: the main model)."""
+        base = (base_url or settings.LLAMA_CPP_URL).rstrip('/')
         if not base.endswith("/v1"):
             url = f"{base}/v1/chat/completions"
         else:

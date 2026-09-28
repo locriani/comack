@@ -16,6 +16,7 @@ ENERGIES = ("low", "medium", "high")
 SYSTEM_PROMPT = (
     "You turn overheard room speech into raw material for a surreal comic strip. "
     "Some words were already swapped for absurd ones; treat them as real. "
+    "Every line you write is a coherent, grammatical English sentence. "
     "Output ONLY valid JSON."
 )
 
@@ -46,9 +47,10 @@ async def mine_sentences(scrambled: str) -> List[str]:
 For EACH sentence, in order, write:
 - "vibe": its emotional vibe in at most 3 words
 - "energy": "low", "medium", or "high"
-- "content": one short surreal comic line (max 20 words) riffing on the sentence, keeping its key words
+- "content": one short surreal comic line (max 20 words) riffing on the sentence, keeping its key words.
+  It MUST be a single coherent, grammatical English sentence that makes sense on its own.
 Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} with exactly {len(sentences)} entries."""
-    result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt)
+    result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
     items = (result or {}).get("sentences") or []
     if not items:
         # ponytail: LLM down = these sentences are dropped; add a local fallback if outages are common.

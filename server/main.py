@@ -83,6 +83,8 @@ async def run_comic_generation_cycle() -> Dict[str, Any]:
         bin_path=str(bin_path)
     )
     
+    db.set_state("lines_wanted", str(script["lines_wanted_next"]))
+
     # 5. Mark transcripts as used
     if unprocessed:
         transcript_ids = [t["id"] for t in unprocessed]
@@ -137,14 +139,25 @@ async def _trigger_cycle_and_dispatch():
         _trigger_running = False
 
 
+def comic_due(since_last_s: float, have_lines: int, wanted_lines: int) -> bool:
+    """Generate once the requested room notes are in, bounded by the min/max gap between comics."""
+    if since_last_s >= settings.COMIC_MAX_MINUTES * 60:
+        return True
+    return since_last_s >= settings.COMIC_MIN_MINUTES * 60 and have_lines >= wanted_lines
+
+
 async def periodic_comic_scheduler():
-    """Background task running every COMIC_CYCLE_MINUTES."""
-    interval_seconds = settings.COMIC_CYCLE_MINUTES * 60
-    logger.info(f"Comic cycle scheduler started. Interval: {settings.COMIC_CYCLE_MINUTES} minutes.")
+    """Checks every 30s whether the next comic is due (see comic_due)."""
+    started = time.time()
+    logger.info(f"Comic scheduler started: {settings.COMIC_MIN_MINUTES}-{settings.COMIC_MAX_MINUTES} min between comics.")
     while True:
         try:
-            await asyncio.sleep(interval_seconds)
-            await run_comic_generation_cycle()
+            await asyncio.sleep(30)
+            last = db.get_recent_comics(limit=1)
+            since = time.time() - (last[0]["created_at"] if last else started)
+            wanted = int(db.get_state("lines_wanted", str(settings.DEFAULT_LINES_WANTED)))
+            if comic_due(since, len(db.get_unprocessed_transcripts()), wanted):
+                await run_comic_generation_cycle()
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -177,6 +190,7 @@ async def lifespan(app: FastAPI):
         sample_rate=16000,
         energy_threshold=650.0,
         speech_pad_seconds=0.8,
+        max_segment_seconds=settings.VAD_MAX_SEGMENT_SECONDS,
         on_speech_segment=lambda seg: transcriber.process_segment(seg)
     )
     
@@ -285,7 +299,8 @@ async def get_system_status():
         "sneaky": sneaky,
         "settings": {
             "silence_threshold_seconds": settings.SNEAKY_SILENCE_SECONDS,
-            "cycle_minutes": settings.COMIC_CYCLE_MINUTES,
+            "lines_wanted": int(db.get_state("lines_wanted", str(settings.DEFAULT_LINES_WANTED))),
+            "lines_collected": len(db.get_unprocessed_transcripts()),
             "pos_scramble_rate": settings.POS_SCRAMBLE_RATE
         }
     }

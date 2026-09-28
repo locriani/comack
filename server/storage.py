@@ -28,7 +28,7 @@ def init_db():
         genre TEXT NOT NULL,
         premise TEXT NOT NULL,
         started_at REAL NOT NULL,
-        target_duration_hours REAL NOT NULL,
+        target_panels INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'CONCLUDED'
         climax_stage INTEGER NOT NULL DEFAULT 0,
         metadata_json TEXT DEFAULT '{}'
@@ -89,15 +89,15 @@ class Database:
         conn.close()
         return dict(row) if row else None
 
-    def create_arc(self, title: str, genre: str, premise: str, target_duration_hours: float, metadata: Dict[str, Any] = None) -> int:
+    def create_arc(self, title: str, genre: str, premise: str, target_panels: int, metadata: Dict[str, Any] = None) -> int:
         conn = get_connection()
         cursor = conn.cursor()
         # Mark any previous active arcs as CONCLUDED
         cursor.execute("UPDATE story_arcs SET status = 'CONCLUDED' WHERE status = 'ACTIVE'")
         cursor.execute("""
-            INSERT INTO story_arcs (title, genre, premise, started_at, target_duration_hours, status, metadata_json)
+            INSERT INTO story_arcs (title, genre, premise, started_at, target_panels, status, metadata_json)
             VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?)
-        """, (title, genre, premise, time.time(), target_duration_hours, json.dumps(metadata or {})))
+        """, (title, genre, premise, time.time(), target_panels, json.dumps(metadata or {})))
         arc_id = cursor.lastrowid
         conn.commit()
         conn.close()
@@ -215,6 +215,14 @@ class Database:
         cursor.execute("""
             SELECT * FROM comics ORDER BY issue_number DESC LIMIT ?
         """, (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_arc_comics(self, arc_id: int) -> List[Dict[str, Any]]:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM comics WHERE arc_id = ? ORDER BY issue_number ASC", (arc_id,))
         rows = cursor.fetchall()
         conn.close()
         return [dict(r) for r in rows]

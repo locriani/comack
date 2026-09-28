@@ -33,6 +33,8 @@ class Settings(BaseModel):
     # llama.cpp server configuration
     LLAMA_CPP_URL: str = os.getenv("LLAMA_CPP_URL", "http://comack-server.example-tailnet.ts.net:80/")
     LLAMA_CPP_MODEL: str = os.getenv("LLAMA_CPP_MODEL", "")
+    # Small, fast model for the per-sentence miner pass (empty = use LLAMA_CPP_URL)
+    MINER_LLAMA_URL: str = os.getenv("MINER_LLAMA_URL", "")
     
     # Whisper Speech-to-Text configuration
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "base.en")
@@ -44,15 +46,21 @@ class Settings(BaseModel):
     # Spoken phrases that force an immediate refresh (comma-separated)
     SECRET_PHRASES: list[str] = [p.strip().lower() for p in os.getenv("SECRET_PHRASES", "alpha protocol").split(",") if p.strip()]
 
-    # Comic generation interval in minutes (default 30 min)
-    COMIC_CYCLE_MINUTES: int = int(os.getenv("COMIC_CYCLE_MINUTES", "30"))
-    
+    # A new comic is generated once the room notes the last comic asked for have arrived,
+    # but never sooner than COMIC_MIN_MINUTES and never later than COMIC_MAX_MINUTES.
+    COMIC_MIN_MINUTES: float = float(os.getenv("COMIC_MIN_MINUTES", "5"))
+    COMIC_MAX_MINUTES: float = float(os.getenv("COMIC_MAX_MINUTES", "1440"))  # 1 day
+    DEFAULT_LINES_WANTED: int = int(os.getenv("DEFAULT_LINES_WANTED", "8"))
+
+    # Longest continuous speech chunk sent to Whisper (segments also end at pauses)
+    VAD_MAX_SEGMENT_SECONDS: float = float(os.getenv("VAD_MAX_SEGMENT_SECONDS", "60"))
+
     # Stochastic Part-of-Speech "Differential Privacy" word scramble rate
-    POS_SCRAMBLE_RATE: float = float(os.getenv("POS_SCRAMBLE_RATE", "0.25"))
+    POS_SCRAMBLE_RATE: float = float(os.getenv("POS_SCRAMBLE_RATE", "0.10"))
     
-    # Narrative arc duration bounds (between 4 hours and 7 days)
-    ARC_MIN_HOURS: float = float(os.getenv("ARC_MIN_HOURS", "4.0"))
-    ARC_MAX_HOURS: float = float(os.getenv("ARC_MAX_HOURS", "168.0"))  # 7 days
+    # Narrative arc length bounds, in panels
+    ARC_MIN_PANELS: int = int(os.getenv("ARC_MIN_PANELS", "12"))
+    ARC_MAX_PANELS: int = int(os.getenv("ARC_MAX_PANELS", "60"))
     
     # Image Generation Configuration (Defaults to fast 1-step SD-Turbo for immediate responsiveness)
     FLUX_MODEL_ID: str = os.getenv("FLUX_MODEL_ID", "stabilityai/sd-turbo")
