@@ -1,6 +1,7 @@
 """
 Story element miner.
-[audio] -> [transcribe] -> [10% swap + digit swap] -> HERE: [LLM content per sentence] -> [10% swap] -> stored.
+[audio] -> [transcribe] -> [10% swap + digit swap] -> HERE: [LLM content per sentence]
+  -> [10% swap + digit swap] -> [LLM smoothing] -> stored.
 The scrambled transcript itself is never stored; only these generated, re-scrambled lines are.
 """
 import re
@@ -26,12 +27,11 @@ def split_sentences(text: str) -> List[str]:
     return [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
 
 
-def format_row(item: dict) -> str:
-    """`[VIBE • ENERGY] content`, with the content re-scrambled."""
+def format_row(item: dict, content: str) -> str:
+    """`[VIBE • ENERGY] content`."""
     vibe = " ".join(str(item.get("vibe") or "deadpan").split()[:3]).upper()
     energy = str(item.get("energy", "")).lower()
     energy = energy if energy in ENERGIES else "medium"
-    content = scramble_text(str(item.get("content") or ""), settings.POS_SCRAMBLE_RATE)
     return f"[{vibe} • {energy.upper()}] {content}"
 
 
@@ -64,5 +64,30 @@ Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} 
     if not items:
         # ponytail: LLM down = these sentences are dropped; add a local fallback if outages are common.
         logger.warning(f"Miner got no LLM content; dropped {len(sentences)} sentence(s).")
-    # POS tagging for the second scramble is CPU work: keep it off the event loop
-    return await asyncio.to_thread(lambda: [format_row(i) for i in items[:len(sentences)] if isinstance(i, dict)])
+    items = [i for i in items[:len(sentences)] if isinstance(i, dict)]
+    # Second scramble (POS swap + digit swap) is CPU work: keep it off the event loop
+    lines = await asyncio.to_thread(
+        lambda: [scramble_text(str(i.get("content") or ""), settings.POS_SCRAMBLE_RATE) for i in items])
+    lines = await _smooth(lines)
+    return [format_row(i, line) for i, line in zip(items, lines)]
+
+
+async def _smooth(lines: List[str]) -> List[str]:
+    """Final LLM pass: the re-scrambled lines, rewritten to read as coherent English again."""
+    if not lines:
+        return lines
+    from server.story.narrative_engine import narrative_engine
+    numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(lines))
+    prompt = f"""Comic lines:
+{numbered}
+
+Rewrite each line, in order, as coherent, grammatical English that makes sense on its own.
+Keep its words (including the odd ones) and its absurdity; change only what grammar needs.
+Output: {{"lines": ["..."]}} with exactly {len(lines)} entries."""
+    result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
+    out = (result or {}).get("lines") or []
+    if len(out) != len(lines) or not all(isinstance(s, str) and s.strip() for s in out):
+        # The scrambled lines are already private; they just read rougher.
+        logger.warning("Smoothing pass got no usable LLM output; storing the scrambled lines.")
+        return lines
+    return [s.strip() for s in out]
