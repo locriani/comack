@@ -117,9 +117,9 @@ class NarrativeEngine:
         system_prompt = (
             "You are the master creator of 'COMACK', an ongoing, surreal comic strip that transforms "
             "ambient room vibes and mined thematic elements into a continuous, absurdist graphic narrative. "
-            "IMPORTANT PRIVACY RULE: Never quote or reproduce any spoken words directly. "
-            "Instead, translate the mined emotional vibes, abstract conflicts, and subtext into 100% ORIGINAL, "
-            "SURREAL character dialogue and comic situations fitting the active story arc. "
+            "You are given room notes: a vibe, an energy level, and a surreal line riffing on something "
+            "overheard in the room (some words swapped for absurd substitutes). Put those lines, swaps and all, "
+            "into characters' mouths, captions, and situations, twisted to fit the active story arc. "
             "Characters treat ridiculous events with total, deadpan melodrama and serious urgency. "
             "You must output ONLY valid, parseable JSON conforming strictly to the requested schema."
         )
@@ -131,7 +131,7 @@ Arc Premise: {arc['premise']}
 Arc Progress: {arc_progress * 100:.1f}% (Hour {elapsed_hours:.1f} of {arc['target_duration_hours']}h)
 Issue Number: #{issue_number}
 
-{history_section}Mined Thematic Elements & Emotional Vibes from the past 30 minutes:
+{history_section}Room notes from the past 30 minutes ([VIBE • ENERGY] line):
 {json.dumps(mined_elements, indent=2) if mined_elements else '["(Eerie room silence... only the ambient hum of quantum machinery)"]'}
 
 TASK:
@@ -153,7 +153,7 @@ TASK:
       "scene_description": "High-contrast black and white ink scene description: bold character silhouettes, heavy ink outlines, stark shadows, crosshatching patterns, setting, perspective",
       "narration": "Optional caption box text (e.g. 'Meanwhile, in Sector 9...')",
       "speech_balloons": [
-        {{"character": "Character Name", "text": "Completely original spoken dialogue inspired by the theme"}}
+        {{"character": "Character Name", "text": "Dialogue built from the room notes"}}
       ],
       "sound_effect": "Optional comic SFX e.g. 'BZZZZT' or 'CLICK'"
     }}

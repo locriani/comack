@@ -1,72 +1,56 @@
 """
-Thematic Story Element Miner.
-Extracts high-level emotional subtext, dramatic tensions, abstract themes,
-and surreal metaphors from speech without ever storing, quoting, or directly using
-the actual spoken words.
+Story element miner.
+[audio] -> [transcribe] -> [25% swap] -> HERE: [LLM content per sentence] -> [25% swap] -> stored.
+The scrambled transcript itself is never stored; only these generated, re-scrambled lines are.
 """
 import re
-from typing import Dict, Any, List
+import logging
+from typing import List
+from server.config import settings
+from server.privacy.pos_scrambler import scramble_text
 
-# Keywords mapped to emotional vibes
-TONE_KEYWORDS = {
-    "urgent": ["hurry", "quick", "fast", "asap", "late", "run", "now", "emergency", "deadline", "clock"],
-    "suspicious": ["why", "who", "secret", "weird", "strange", "doubt", "sure", "check", "hiding", "look"],
-    "frustrated": ["broken", "fail", "stuck", "error", "hate", "damn", "wrong", "again", "won't", "can't"],
-    "philosophical": ["think", "maybe", "why", "meaning", "life", "future", "always", "wonder", "deep", "space"],
-    "bureaucratic": ["meeting", "schedule", "plan", "document", "form", "policy", "process", "sign", "email"],
-    "culinary": ["eat", "food", "cook", "oven", "fridge", "coffee", "lunch", "dinner", "snack", "hungry", "tea"],
-    "technical": ["code", "server", "deploy", "computer", "wifi", "network", "system", "screen", "power", "plug"]
-}
+logger = logging.getLogger("comack.miner")
 
-ABSTRACT_THEMES = [
-    "An uncooperative apparatus threatening municipal harmony",
-    "A desperate race against an arbitrary chronometer",
-    "The metaphysical search for a misplaced household relic",
-    "A quiet standoff over an unresolved administrative grievance",
-    "The sudden realization that reality has shifted by three inches",
-    "A solemn debate concerning the caloric intake of celestial beings",
-    "An urgent diplomatic summit regarding appliance etiquette",
-    "A cosmic malfunction inside an unassuming domestic receptacle"
-]
+ENERGIES = ("low", "medium", "high")
 
-SURREAL_METAPHORS = [
-    "The quantum toaster is vibrating at an unauthorized frequency",
-    "An interstellar courier has dropped an unregistered trombone into Sector 4",
-    "The bureaucratic archives have decided to hibernate until Tuesday",
-    "A subterranean jellyfish has commandeered the main heating duct",
-    "The chronometer is moving sideways instead of forward",
-    "Someone has attempted to microwave an ancient curse"
-]
+SYSTEM_PROMPT = (
+    "You turn overheard room speech into raw material for a surreal comic strip. "
+    "Some words were already swapped for absurd ones; treat them as real. "
+    "Output ONLY valid JSON."
+)
 
 
-def mine_story_elements(text: str, duration_seconds: float) -> Dict[str, Any]:
-    """
-    Mines abstract story elements from text.
-    The raw text is discarded immediately after analysis.
-    Returns: Dict containing vibe, thematic_conflict, surreal_metaphor, energy_level.
-    """
-    clean = text.lower()
-    
-    # 1. Detect emotional tone
-    detected_tones = []
-    for tone, keywords in TONE_KEYWORDS.items():
-        if any(kw in clean for kw in keywords):
-            detected_tones.append(tone)
-            
-    primary_tone = detected_tones[0] if detected_tones else "deadpan curiosity"
-    
-    # 2. Select an abstract theme based on length & detected tone
-    import random
-    theme = random.choice(ABSTRACT_THEMES)
-    metaphor = random.choice(SURREAL_METAPHORS)
-    
-    # Energy level based on duration and punctuation
-    energy = "high" if "!" in text or duration_seconds > 4.0 else ("medium" if duration_seconds > 1.5 else "low")
-    
-    return {
-        "emotional_tone": primary_tone,
-        "abstract_theme": theme,
-        "surreal_metaphor": metaphor,
-        "energy_level": energy,
-        "duration_seconds": round(duration_seconds, 1)
-    }
+def split_sentences(text: str) -> List[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
+
+
+def format_row(item: dict) -> str:
+    """`[VIBE • ENERGY] content`, with the content re-scrambled."""
+    vibe = " ".join(str(item.get("vibe") or "deadpan").split()[:3]).upper()
+    energy = str(item.get("energy", "")).lower()
+    energy = energy if energy in ENERGIES else "medium"
+    content = scramble_text(str(item.get("content") or ""), settings.POS_SCRAMBLE_RATE)
+    return f"[{vibe} • {energy.upper()}] {content}"
+
+
+async def mine_sentences(scrambled: str) -> List[str]:
+    """One LLM call per transcript; returns one stored row per detected sentence."""
+    from server.story.narrative_engine import narrative_engine
+    sentences = split_sentences(scrambled)
+    if not sentences:
+        return []
+    numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
+    prompt = f"""Overheard sentences:
+{numbered}
+
+For EACH sentence, in order, write:
+- "vibe": its emotional vibe in at most 3 words
+- "energy": "low", "medium", or "high"
+- "content": one short surreal comic line (max 20 words) riffing on the sentence, keeping its key words
+Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} with exactly {len(sentences)} entries."""
+    result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt)
+    items = (result or {}).get("sentences") or []
+    if not items:
+        # ponytail: LLM down = these sentences are dropped; add a local fallback if outages are common.
+        logger.warning(f"Miner got no LLM content; dropped {len(sentences)} sentence(s).")
+    return [format_row(i) for i in items[:len(sentences)] if isinstance(i, dict)]

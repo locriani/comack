@@ -1,7 +1,8 @@
 """
 Audio Transcriber with differential privacy word scrambling.
 Uses faster-whisper (if available) or HTTP/Mock fallback, converts speech to text,
-applies stochastic POS scrambling, saves to DB, and immediately wipes raw audio from memory.
+applies stochastic POS scrambling, and immediately wipes raw audio and text from memory.
+Nothing is stored here: the scrambled text goes to on_transcript_ready (see privacy/thematic_miner.py).
 """
 import io
 import re
@@ -11,7 +12,6 @@ import logging
 from typing import Optional, Callable
 from server.audio.vad import SpeechSegment
 from server.privacy.pos_scrambler import scramble_text
-from server.storage import db
 from server.config import settings
 
 logger = logging.getLogger("comack.transcriber")
@@ -55,7 +55,7 @@ def pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
 class Transcriber:
     def __init__(
         self, 
-        on_transcript_ready: Optional[Callable[[dict], None]] = None,
+        on_transcript_ready: Optional[Callable[[str, float, float], None]] = None,
         on_secret_trigger: Optional[Callable[[str], None]] = None
     ):
         self.on_transcript_ready = on_transcript_ready
@@ -85,37 +85,14 @@ class Transcriber:
                 except Exception as ex:
                     logger.error(f"Error executing secret trigger callback: {ex}")
         
-        # Mine abstract themes, emotional vibe, and surreal metaphors
-        from server.privacy.thematic_miner import mine_story_elements
-        elements = mine_story_elements(clean_text, segment.duration_seconds)
-        
-        # Wipe clean_text from memory immediately
+        # First 25% swap. This scrambled transcript lives in memory only and is NEVER stored;
+        # the miner turns it into the rows that are.
+        scrambled = scramble_text(clean_text, settings.POS_SCRAMBLE_RATE)
         del clean_text
         del raw_text
-        
-        thematic_summary = (
-            f"[{elements['emotional_tone'].upper()} VIBE • {elements['energy_level'].upper()} ENERGY] "
-            f"Conflict: {elements['abstract_theme']} | Metaphor: {elements['surreal_metaphor']}"
-        )
-        logger.info(f"Mined Story Element: {thematic_summary}")
-        
-        # Persist mined theme to database (NEVER storing the raw spoken words)
-        transcript_id = db.save_transcript(
-            timestamp=segment.timestamp,
-            duration_seconds=segment.duration_seconds,
-            scrambled_text=thematic_summary
-        )
-        
-        item = {
-            "id": transcript_id,
-            "timestamp": segment.timestamp,
-            "duration_seconds": segment.duration_seconds,
-            "scrambled_text": thematic_summary,
-            "story_elements": elements
-        }
-        
+
         if self.on_transcript_ready:
-            self.on_transcript_ready(item)
+            self.on_transcript_ready(scrambled, segment.timestamp, segment.duration_seconds)
 
     def _transcribe(self, pcm_bytes: bytes) -> str:
         """Internal transcription dispatcher."""

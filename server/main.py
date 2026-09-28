@@ -18,6 +18,7 @@ from server.config import settings, COMICS_DIR, STATIC_DIR
 from server.storage import db
 from server.audio.vad import AudioVAD, SpeechSegment
 from server.audio.transcriber import Transcriber
+from server.privacy.thematic_miner import mine_sentences
 from server.story.narrative_engine import narrative_engine
 from server.render.comic_compositor import comic_compositor
 from server.dispatcher.sneaky_dispatcher import SneakyDispatcher
@@ -45,6 +46,15 @@ def broadcast_event(event_data: Dict[str, Any]):
         except Exception:
             dead_sockets.add(ws)
     event_subscribers.difference_update(dead_sockets)
+
+
+async def mine_and_store(scrambled: str, timestamp: float, duration: float):
+    """Scrambled transcript -> LLM content per sentence -> second 25% swap -> the only thing stored."""
+    for row in await mine_sentences(scrambled):
+        logger.info(f"Mined Story Element: {row}")
+        t_id = db.save_transcript(timestamp, duration, row)
+        broadcast_event({"event": "NEW_TRANSCRIPT", "transcript": {
+            "id": t_id, "timestamp": timestamp, "duration_seconds": duration, "scrambled_text": row}})
 
 
 async def run_comic_generation_cycle() -> Dict[str, Any]:
@@ -158,9 +168,8 @@ async def lifespan(app: FastAPI):
         loop.create_task(_trigger_cycle_and_dispatch())
 
     transcriber = Transcriber(
-        on_transcript_ready=lambda t: broadcast_event({
-            "event": "NEW_TRANSCRIPT", "transcript": t
-        }),
+        # ponytail: one LLM call per 10s segment, queued by llama.cpp; add a worker queue if it backs up.
+        on_transcript_ready=lambda text, ts, dur: loop.create_task(mine_and_store(text, ts, dur)),
         on_secret_trigger=handle_secret_trigger
     )
     
@@ -376,12 +385,7 @@ async def simulate_speech_dialogue(payload: Dict[str, Any]):
     vad.last_speech_timestamp = time.time()
     vad.current_silence_seconds = 0.0
     
-    # Transcribe & scramble
+    # Same path as real speech: scramble, then mine; only mined rows are stored
     from server.privacy.pos_scrambler import scramble_text
-    scrambled = scramble_text(text, settings.POS_SCRAMBLE_RATE)
-    t_id = db.save_transcript(time.time(), duration, scrambled)
-    
-    item = {"id": t_id, "timestamp": time.time(), "duration_seconds": duration, "scrambled_text": scrambled}
-    broadcast_event({"event": "NEW_TRANSCRIPT", "transcript": item})
-    
-    return {"status": "simulated", "transcript": item}
+    await mine_and_store(scramble_text(text, settings.POS_SCRAMBLE_RATE), time.time(), duration)
+    return {"status": "simulated"}
