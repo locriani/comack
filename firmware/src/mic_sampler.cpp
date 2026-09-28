@@ -1,15 +1,20 @@
 #include "mic_sampler.h"
 #include <driver/i2s.h>
+#include <driver/gpio.h>
+#include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
+static const char* TAG = "MIC";
 #define I2S_PORT I2S_NUM_0
 
 MicSampler::MicSampler() : _initialized(false) {}
 
 bool MicSampler::begin() {
     // 1. Enable power to microphone gate
-    pinMode(PIN_MIC_PWR, OUTPUT);
-    digitalWrite(PIN_MIC_PWR, HIGH);
-    delay(50); // Power stabilization delay
+    gpio_set_direction((gpio_num_t)PIN_MIC_PWR, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)PIN_MIC_PWR, 1);
+    vTaskDelay(pdMS_TO_TICKS(50)); // Power stabilization delay
 
     // 2. Configure I2S in PDM RX mode
     i2s_config_t i2s_config = {
@@ -35,19 +40,19 @@ bool MicSampler::begin() {
 
     esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
     if (err != ESP_OK) {
-        Serial.printf("[MIC] Failed to install I2S driver: %d\n", err);
+        ESP_LOGE(TAG, "Failed to install I2S driver: %d", err);
         return false;
     }
 
     err = i2s_set_pin(I2S_PORT, &pin_config);
     if (err != ESP_OK) {
-        Serial.printf("[MIC] Failed to set I2S pins: %d\n", err);
+        ESP_LOGE(TAG, "Failed to set I2S pins: %d", err);
         i2s_driver_uninstall(I2S_PORT);
         return false;
     }
 
     _initialized = true;
-    Serial.println("[MIC] PDM Microphone initialized successfully at 16kHz.");
+    ESP_LOGI(TAG, "PDM Microphone initialized successfully at 16kHz.");
     return true;
 }
 
@@ -66,7 +71,7 @@ size_t MicSampler::readSamples(int16_t* buffer, size_t num_samples) {
 void MicSampler::end() {
     if (_initialized) {
         i2s_driver_uninstall(I2S_PORT);
-        digitalWrite(PIN_MIC_PWR, LOW);
+        gpio_set_level((gpio_num_t)PIN_MIC_PWR, 0);
         _initialized = false;
     }
 }

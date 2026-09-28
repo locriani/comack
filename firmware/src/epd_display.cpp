@@ -1,4 +1,10 @@
 #include "epd_display.h"
+#include <esp_log.h>
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
+static const char* TAG = "EPD";
 
 // Waveshare 7.50inv2 EPD Command Codes
 #define EPD_CMD_PANEL_SETTING       0x00
@@ -13,68 +19,102 @@
 #define EPD_CMD_TCON_SETTING        0x60
 #define EPD_CMD_RESOLUTION_SETTING  0x61
 
-EPDDisplay::EPDDisplay() {}
+EPDDisplay::EPDDisplay() : _spi(NULL) {}
 
 bool EPDDisplay::begin() {
-    pinMode(PIN_EPD_CS, OUTPUT);
-    pinMode(PIN_EPD_DC, OUTPUT);
-    pinMode(PIN_EPD_RST, OUTPUT);
-    pinMode(PIN_EPD_BUSY, INPUT);
+    // 1. Configure control GPIOs
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL << PIN_EPD_DC) | (1ULL << PIN_EPD_RST);
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&io_conf);
 
-    digitalWrite(PIN_EPD_CS, HIGH);
+    // Busy pin is input with pullup
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL << PIN_EPD_BUSY);
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&io_conf);
 
-    // Initialize SPI on custom pins
-    SPI.begin(PIN_EPD_SCK, -1, PIN_EPD_MOSI, PIN_EPD_CS);
-    SPI.beginTransaction(SPISettings(10000000, MSBFIRST, SPI_MODE0));
+    // 2. Initialize SPI bus (SPI2_HOST)
+    spi_bus_config_t buscfg = {};
+    buscfg.mosi_io_num = PIN_EPD_MOSI;
+    buscfg.miso_io_num = -1;
+    buscfg.sclk_io_num = PIN_EPD_SCK;
+    buscfg.quadwp_io_num = -1;
+    buscfg.quadhd_io_num = -1;
+    buscfg.max_transfer_sz = EPD_BUFFER_BYTES + 32;
 
-    Serial.println("[EPD] Initialized SPI interface.");
+    esp_err_t ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize SPI bus: %d", ret);
+        return false;
+    }
+
+    spi_device_interface_config_t devcfg = {};
+    devcfg.clock_speed_hz = 10 * 1000 * 1000; // 10 MHz
+    devcfg.mode = 0;                            // SPI mode 0
+    devcfg.spics_io_num = PIN_EPD_CS;           // Hardware CS
+    devcfg.queue_size = 1;
+
+    ret = spi_bus_add_device(SPI2_HOST, &devcfg, &_spi);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add SPI device: %d", ret);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "7.5\" e-Paper SPI interface initialized.");
     return true;
 }
 
 void EPDDisplay::reset() {
-    digitalWrite(PIN_EPD_RST, HIGH);
-    delay(20);
-    digitalWrite(PIN_EPD_RST, LOW);
-    delay(4);
-    digitalWrite(PIN_EPD_RST, HIGH);
-    delay(20);
+    gpio_set_level((gpio_num_t)PIN_EPD_RST, 1);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    gpio_set_level((gpio_num_t)PIN_EPD_RST, 0);
+    vTaskDelay(pdMS_TO_TICKS(4));
+    gpio_set_level((gpio_num_t)PIN_EPD_RST, 1);
+    vTaskDelay(pdMS_TO_TICKS(20));
 }
 
 void EPDDisplay::waitBusy() {
     // BUSY pin on reTerminal E1001 is active LOW (0 = busy, 1 = idle)
-    unsigned long start = millis();
-    while (digitalRead(PIN_EPD_BUSY) == LOW) {
-        delay(10);
-        if (millis() - start > 20000) {
-            Serial.println("[EPD] Warning: Wait busy timeout!");
+    int64_t start = esp_timer_get_time();
+    while (gpio_get_level((gpio_num_t)PIN_EPD_BUSY) == 0) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        if ((esp_timer_get_time() - start) > 20000000) { // 20s timeout
+            ESP_LOGW(TAG, "Wait busy timeout!");
             break;
         }
     }
 }
 
 void EPDDisplay::sendCommand(uint8_t command) {
-    digitalWrite(PIN_EPD_DC, LOW);
-    digitalWrite(PIN_EPD_CS, LOW);
-    SPI.transfer(command);
-    digitalWrite(PIN_EPD_CS, HIGH);
+    gpio_set_level((gpio_num_t)PIN_EPD_DC, 0);
+    spi_transaction_t t = {};
+    t.length = 8;
+    t.tx_buffer = &command;
+    spi_device_polling_transmit(_spi, &t);
 }
 
 void EPDDisplay::sendData(uint8_t data) {
-    digitalWrite(PIN_EPD_DC, HIGH);
-    digitalWrite(PIN_EPD_CS, LOW);
-    SPI.transfer(data);
-    digitalWrite(PIN_EPD_CS, HIGH);
+    gpio_set_level((gpio_num_t)PIN_EPD_DC, 1);
+    spi_transaction_t t = {};
+    t.length = 8;
+    t.tx_buffer = &data;
+    spi_device_polling_transmit(_spi, &t);
 }
 
 void EPDDisplay::sendDataBytes(const uint8_t* data, size_t length) {
-    digitalWrite(PIN_EPD_DC, HIGH);
-    digitalWrite(PIN_EPD_CS, LOW);
-    SPI.transferBytes(data, NULL, length);
-    digitalWrite(PIN_EPD_CS, HIGH);
+    gpio_set_level((gpio_num_t)PIN_EPD_DC, 1);
+    spi_transaction_t t = {};
+    t.length = length * 8;
+    t.tx_buffer = data;
+    spi_device_polling_transmit(_spi, &t);
 }
 
 void EPDDisplay::displayFrame(const uint8_t* image_buffer) {
-    Serial.println("[EPD] Starting display refresh cycle...");
+    ESP_LOGI(TAG, "Starting e-Paper refresh cycle...");
     reset();
     waitBusy();
 
@@ -109,10 +149,10 @@ void EPDDisplay::displayFrame(const uint8_t* image_buffer) {
 
     // Trigger display refresh
     sendCommand(EPD_CMD_DISPLAY_REFRESH);
-    delay(100);
+    vTaskDelay(pdMS_TO_TICKS(100));
     waitBusy();
 
-    Serial.println("[EPD] Display refreshed successfully.");
+    ESP_LOGI(TAG, "Display refreshed successfully.");
     sleep();
 }
 

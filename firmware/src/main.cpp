@@ -1,191 +1,291 @@
-#include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiMulti.h>
-#include <HTTPClient.h>
-#include <WebSocketsClient.h>
-#include <ArduinoJson.h>
+#include <stdio.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/event_groups.h"
+#include "esp_system.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_netif.h"
+#include "esp_heap_caps.h"
 
 #include "config.h"
 #include "mic_sampler.h"
 #include "epd_display.h"
+#include "microlink.h"
+
+static const char *TAG = "COMACK";
 
 // Hardware drivers
-MicSampler mic;
-EPDDisplay epd;
-WiFiMulti wifiMulti;
+static MicSampler mic;
+static EPDDisplay epd;
 
-// WebSockets clients
-WebSocketsClient wsAudio;
-WebSocketsClient wsEvents;
+// MicroLink Tailscale Handle
+static microlink_t *ml = NULL;
 
 // PSRAM Buffers
-int16_t* audioChunkBuffer = nullptr;
-uint8_t* epdFrameBuffer = nullptr;
+static int16_t *audioChunkBuffer = NULL;
+static uint8_t *epdFrameBuffer = NULL;
 
-// Flags & State
-volatile bool newComicAvailable = false;
-unsigned long lastHeartbeat = 0;
+// Synchronization
+static EventGroupHandle_t app_event_group;
+#define WIFI_CONNECTED_BIT      BIT0
+#define TAILSCALE_CONNECTED_BIT BIT1
 
-void downloadAndDisplayComic() {
-    Serial.println("[MAIN] Fetching new comic binary from comack-server...");
-    HTTPClient http;
-    String url = String("http://") + COMACK_SERVER_HOST + ":" + COMACK_SERVER_PORT + "/api/comics/current.bin";
+// Wi-Fi credentials list for fallback
+static const struct {
+    const char *ssid;
+    const char *pass;
+} wifi_networks[] = {
+    { WIFI_SSID_1, WIFI_PASS_1 },
+    { WIFI_SSID_2, WIFI_PASS_2 }
+};
+static int current_wifi_idx = 0;
+static const int wifi_network_count = sizeof(wifi_networks) / sizeof(wifi_networks[0]);
 
-    http.begin(url);
-    int httpCode = http.GET();
+/* ============================================================================
+ * Tailscale Callbacks
+ * ========================================================================== */
 
-    if (httpCode == HTTP_CODE_OK) {
-        WiFiClient* stream = http.getStreamPtr();
-        size_t totalRead = 0;
+static void on_tailscale_state_change(microlink_t *ml_handle, microlink_state_t state, void *user_data) {
+    const char *state_names[] = {
+        "IDLE", "WIFI_WAIT", "CONNECTING", "REGISTERING",
+        "CONNECTED", "RECONNECTING", "ERROR"
+    };
+    const char *name = (state < sizeof(state_names)/sizeof(state_names[0])) ? state_names[state] : "UNKNOWN";
+    ESP_LOGI(TAG, "Tailscale state -> %s", name);
 
-        while (http.connected() && (totalRead < EPD_BUFFER_BYTES)) {
-            size_t available = stream->available();
-            if (available) {
-                size_t readNow = stream->readBytes((char*)(epdFrameBuffer + totalRead), 
-                                                   min(available, EPD_BUFFER_BYTES - totalRead));
-                totalRead += readNow;
-            }
-            delay(1);
-        }
-
-        if (totalRead == EPD_BUFFER_BYTES) {
-            Serial.println("[MAIN] Comic binary loaded. Executing sneaky e-paper refresh!");
-            epd.displayFrame(epdFrameBuffer);
-        } else {
-            Serial.printf("[MAIN] Error: Incomplete read (%d / %d bytes)\n", totalRead, EPD_BUFFER_BYTES);
-        }
-    } else {
-        Serial.printf("[MAIN] HTTP GET failed: %d\n", httpCode);
+    if (state == ML_STATE_CONNECTED) {
+        uint32_t ip = microlink_get_vpn_ip(ml_handle);
+        char ip_str[16];
+        microlink_ip_to_str(ip, ip_str);
+        ESP_LOGI(TAG, "==================================================");
+        ESP_LOGI(TAG, "  🎉 TAILSCALE REGISTERED! Node IP: %s", ip_str);
+        ESP_LOGI(TAG, "==================================================");
+        xEventGroupSetBits(app_event_group, TAILSCALE_CONNECTED_BIT);
     }
-    http.end();
 }
 
-void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
-    switch (type) {
-        case WStype_DISCONNECTED:
-            Serial.println("[WS-EVENTS] Disconnected from server.");
-            break;
-        case WStype_CONNECTED:
-            Serial.println("[WS-EVENTS] Connected to server event bus.");
-            break;
-        case WStype_TEXT: {
-            JsonDocument doc;
-            DeserializationError error = deserializeJson(doc, payload, length);
-            if (!error) {
-                const char* eventType = doc["event"];
-                if (eventType && strcmp(eventType, "SNEAKY_COMIC_REFRESH") == 0) {
-                    Serial.println("[WS-EVENTS] *** SNEAKY REFRESH COMMAND RECEIVED ***");
-                    newComicAvailable = true;
+static void on_tailscale_peer_update(microlink_t *ml_handle, const microlink_peer_info_t *peer, void *user_data) {
+    char ip_str[16];
+    microlink_ip_to_str(peer->vpn_ip, ip_str);
+    ESP_LOGI(TAG, "Tailscale Peer: %s (%s) online=%d direct=%d",
+             peer->hostname, ip_str, peer->online, peer->direct_path);
+}
+
+/* ============================================================================
+ * Wi-Fi Event Handler & Multi-AP Support
+ * ========================================================================== */
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGW(TAG, "Wi-Fi disconnected. Trying next available network...");
+        current_wifi_idx = (current_wifi_idx + 1) % wifi_network_count;
+        wifi_config_t wifi_cfg = {};
+        strncpy((char *)wifi_cfg.sta.ssid, wifi_networks[current_wifi_idx].ssid, sizeof(wifi_cfg.sta.ssid) - 1);
+        strncpy((char *)wifi_cfg.sta.password, wifi_networks[current_wifi_idx].pass, sizeof(wifi_cfg.sta.password) - 1);
+        esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
+        esp_wifi_connect();
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+        ESP_LOGI(TAG, "Wi-Fi connected to '%s'! Local IP: " IPSTR,
+                 wifi_networks[current_wifi_idx].ssid,
+                 IP2STR(&event->ip_info.ip));
+        xEventGroupSetBits(app_event_group, WIFI_CONNECTED_BIT);
+    }
+}
+
+static void wifi_init(void) {
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
+
+    wifi_config_t wifi_cfg = {};
+    strncpy((char *)wifi_cfg.sta.ssid, wifi_networks[0].ssid, sizeof(wifi_cfg.sta.ssid) - 1);
+    strncpy((char *)wifi_cfg.sta.password, wifi_networks[0].pass, sizeof(wifi_cfg.sta.password) - 1);
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE)); // Low latency for WireGuard
+
+    ESP_LOGI(TAG, "Searching for Wi-Fi network: %s...", wifi_networks[0].ssid);
+}
+
+/* ============================================================================
+ * Comack Network Tasks (Audio Streamer + Comic Downloader)
+ * ========================================================================== */
+
+static void download_and_refresh_comic(uint32_t dest_ip) {
+    ESP_LOGI(TAG, "Fetching comic binary from comack-server (100.64.0.1:8000)...");
+    microlink_tcp_socket_t *sock = microlink_tcp_connect(ml, dest_ip, COMACK_SERVER_PORT, 10000);
+    if (!sock) {
+        ESP_LOGE(TAG, "Failed to connect TCP to comack-server over Tailscale!");
+        return;
+    }
+
+    // Send HTTP GET request
+    const char *get_req = "GET /api/comics/current.bin HTTP/1.1\r\n"
+                          "Host: 100.64.0.1:8000\r\n"
+                          "Connection: close\r\n\r\n";
+    microlink_tcp_send(sock, get_req, strlen(get_req));
+
+    // Read HTTP response headers then raw 48,000 bytes
+    char header_buf[1024];
+    size_t total_body = 0;
+    bool in_body = false;
+
+    while (total_body < EPD_BUFFER_BYTES) {
+        uint8_t chunk[2048];
+        int r = microlink_tcp_recv(sock, chunk, sizeof(chunk), 5000);
+        if (r <= 0) break;
+
+        if (!in_body) {
+            // Find \r\n\r\n separator
+            for (int i = 0; i < r - 3; i++) {
+                if (chunk[i] == '\r' && chunk[i+1] == '\n' && chunk[i+2] == '\r' && chunk[i+3] == '\n') {
+                    in_body = true;
+                    int body_start = i + 4;
+                    int body_bytes = r - body_start;
+                    if (body_bytes > 0) {
+                        memcpy(epdFrameBuffer, chunk + body_start, body_bytes);
+                        total_body += body_bytes;
+                    }
+                    break;
                 }
             }
-            break;
-        }
-        default:
-            break;
-    }
-}
-
-void audioStreamingTask(void* parameter) {
-    Serial.println("[TASK] Audio streaming worker started on Core 0.");
-    while (true) {
-        if (WiFi.status() == WL_CONNECTED && wsAudio.isConnected()) {
-            size_t samplesRead = mic.readSamples(audioChunkBuffer, AUDIO_CHUNK_SAMPLES);
-            if (samplesRead > 0) {
-                wsAudio.sendBIN((uint8_t*)audioChunkBuffer, samplesRead * sizeof(int16_t));
-            }
         } else {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            size_t to_copy = (total_body + r > EPD_BUFFER_BYTES) ? (EPD_BUFFER_BYTES - total_body) : r;
+            memcpy(epdFrameBuffer + total_body, chunk, to_copy);
+            total_body += to_copy;
         }
+    }
+
+    microlink_tcp_close(sock);
+
+    if (total_body == EPD_BUFFER_BYTES) {
+        ESP_LOGI(TAG, "Complete comic binary received (%d bytes). Updating e-Paper!", (int)total_body);
+        epd.displayFrame(epdFrameBuffer);
+    } else {
+        ESP_LOGW(TAG, "Incomplete comic binary received: %d / %d bytes", (int)total_body, EPD_BUFFER_BYTES);
     }
 }
 
-void setup() {
-    Serial.begin(115200);
-    delay(1000);
-    Serial.println("\n==========================================");
-    Serial.println("  COMACK — reTerminal E1001 Display App   ");
-    Serial.println("==========================================");
+static void audio_streaming_task(void *pvParameters) {
+    uint32_t dest_ip = microlink_parse_ip(COMACK_SERVER_HOST);
+    ESP_LOGI(TAG, "Audio streaming task running on Core 0.");
 
-    // 1. Allocate buffers in PSRAM
-    audioChunkBuffer = (int16_t*)ps_malloc(AUDIO_CHUNK_SAMPLES * sizeof(int16_t));
-    epdFrameBuffer = (uint8_t*)ps_malloc(EPD_BUFFER_BYTES);
+    while (true) {
+        xEventGroupWaitBits(app_event_group, TAILSCALE_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+
+        // Sample audio from onboard PDM microphone
+        size_t samples = mic.readSamples(audioChunkBuffer, AUDIO_CHUNK_SAMPLES);
+        if (samples > 0) {
+            // Audio streaming over Tailscale TCP socket
+            microlink_tcp_socket_t *audio_sock = microlink_tcp_connect(ml, dest_ip, COMACK_SERVER_PORT, 2000);
+            if (audio_sock) {
+                microlink_tcp_send(audio_sock, audioChunkBuffer, samples * sizeof(int16_t));
+                microlink_tcp_close(audio_sock);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+/* ============================================================================
+ * Main Application Entry Point
+ * ========================================================================== */
+
+extern "C" void app_main(void) {
+    ESP_LOGI(TAG, "==========================================");
+    ESP_LOGI(TAG, "  COMACK — reTerminal E1001 Display App   ");
+    ESP_LOGI(TAG, "  Native Tailscale Node with MicroLink   ");
+    ESP_LOGI(TAG, "==========================================");
+
+    // 1. Initialize NVS (required for Wi-Fi and Tailscale key generation)
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    app_event_group = xEventGroupCreate();
+
+    // 2. Allocate buffers in PSRAM
+    audioChunkBuffer = (int16_t*)heap_caps_malloc(AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    epdFrameBuffer = (uint8_t*)heap_caps_malloc(EPD_BUFFER_BYTES, MALLOC_CAP_SPIRAM);
 
     if (!audioChunkBuffer || !epdFrameBuffer) {
-        Serial.println("[MAIN] Error: Failed to allocate PSRAM buffers!");
+        ESP_LOGE(TAG, "Failed to allocate PSRAM buffers!");
     } else {
-        Serial.println("[MAIN] PSRAM buffers allocated successfully.");
+        ESP_LOGI(TAG, "8MB PSRAM buffers allocated successfully (Audio: %d B, EPD: %d B)",
+                 (int)(AUDIO_CHUNK_SAMPLES * sizeof(int16_t)), EPD_BUFFER_BYTES);
     }
 
-    // 2. Initialize hardware peripherals
+    // 3. Initialize hardware peripherals
     mic.begin();
     epd.begin();
 
-    // 3. Connect Wi-Fi (Multi-AP: Example-WiFi-1 / Example-WiFi-2)
-    Serial.println("[MAIN] Initializing Wi-Fi...");
-    WiFi.mode(WIFI_STA);
-    wifiMulti.addAP(WIFI_SSID_1, WIFI_PASS_1);
-    wifiMulti.addAP(WIFI_SSID_2, WIFI_PASS_2);
+    // 4. Start Wi-Fi
+    wifi_init();
 
-    Serial.printf("[MAIN] Searching for available networks (%s / %s)...\n", WIFI_SSID_1, WIFI_SSID_2);
-    int attempts = 0;
-    while (wifiMulti.run() != WL_CONNECTED && attempts < 30) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
+    // 5. Wait for Wi-Fi connection
+    xEventGroupWaitBits(app_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+
+    // 6. Initialize MicroLink Tailscale Client
+    microlink_config_t ml_config = {};
+    ml_config.auth_key = TAILSCALE_AUTH_KEY;
+    ml_config.device_name = TAILSCALE_DEVICE_NAME;
+    ml_config.enable_derp = true;
+    ml_config.enable_stun = true;
+    ml_config.enable_disco = true;
+    ml_config.max_peers = 16;
+    ml_config.wifi_tx_power_dbm = 13;
+
+    ESP_LOGI(TAG, "Initializing MicroLink with Auth Key: %.15s...", TAILSCALE_AUTH_KEY);
+    ml = microlink_init(&ml_config);
+    if (!ml) {
+        ESP_LOGE(TAG, "Failed to initialize MicroLink Tailscale client!");
+        return;
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("\n[MAIN] Wi-Fi connected to: %s | IP: %s\n", 
-                      WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
-    } else {
-        Serial.println("\n[MAIN] Wi-Fi connection timed out. Will auto-retry in loop.");
-    }
+    microlink_set_state_callback(ml, on_tailscale_state_change, NULL);
+    microlink_set_peer_callback(ml, on_tailscale_peer_update, NULL);
 
-    // 4. Setup WebSockets
-    wsAudio.begin(COMACK_SERVER_HOST, COMACK_SERVER_PORT, "/ws/audio");
-    wsAudio.setReconnectInterval(2500);
+    ESP_LOGI(TAG, "Starting Tailscale connection & node registration...");
+    ESP_ERROR_CHECK(microlink_start(ml));
 
-    wsEvents.begin(COMACK_SERVER_HOST, COMACK_SERVER_PORT, "/ws/events");
-    wsEvents.onEvent(onWsEvent);
-    wsEvents.setReconnectInterval(2500);
-
-    // 5. Spawn audio capture worker on Core 0
+    // 7. Spawn audio capture worker on Core 0
     xTaskCreatePinnedToCore(
-        audioStreamingTask,
+        audio_streaming_task,
         "AudioStreamer",
         8192,
         NULL,
-        2, // Priority
+        2,
         NULL,
-        0  // Core 0
+        0 // Core 0
     );
 
-    // 6. Perform initial screen load
-    newComicAvailable = true;
-}
+    // 8. Main event loop on Core 1: wait for Tailscale then manage refreshes
+    xEventGroupWaitBits(app_event_group, TAILSCALE_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+    uint32_t comack-server_ip = microlink_parse_ip(COMACK_SERVER_HOST);
 
-void loop() {
-    // Ensure Wi-Fi connection is maintained across available SSIDs
-    if (WiFi.status() != WL_CONNECTED) {
-        wifiMulti.run();
+    // Initial comic display load
+    download_and_refresh_comic(comack-server_ip);
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
-
-    wsAudio.loop();
-    wsEvents.loop();
-
-    // Heartbeat to keep events WebSocket active
-    if (millis() - lastHeartbeat > 30000) {
-        lastHeartbeat = millis();
-        if (wsEvents.isConnected()) {
-            wsEvents.sendTXT("{\"cmd\":\"PING\"}");
-        }
-    }
-
-    // Handle stealth comic refresh
-    if (newComicAvailable) {
-        newComicAvailable = false;
-        downloadAndDisplayComic();
-    }
-
-    delay(5);
 }

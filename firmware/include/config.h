@@ -1,5 +1,8 @@
 #pragma once
-#include <Arduino.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include "esp_err.h"
 
 // ==========================================
 // Network & Comack Server Configuration
