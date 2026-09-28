@@ -57,7 +57,7 @@ class Settings(BaseModel):
     PROCESS_INTERVAL_MINUTES: float = float(os.getenv("PROCESS_INTERVAL_MINUTES", "2"))
 
     # Stochastic Part-of-Speech "Differential Privacy" word scramble rate
-    POS_SCRAMBLE_RATE: float = float(os.getenv("POS_SCRAMBLE_RATE", "0.10"))
+    POS_SCRAMBLE_RATE: float = float(os.getenv("POS_SCRAMBLE_RATE", "0.25"))
     
     # Narrative arc length bounds, in panels
     ARC_MIN_PANELS: int = int(os.getenv("ARC_MIN_PANELS", "12"))

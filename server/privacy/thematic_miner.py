@@ -1,7 +1,7 @@
 """
 Story element miner.
-[audio] -> [transcribe] -> [10% swap + digit swap] -> HERE: [LLM content per sentence]
-  -> [10% swap + digit swap] -> [LLM smoothing] -> stored.
+[audio] -> [transcribe] -> [25% swap + digit swap] -> HERE: [miner LLM pass 1]
+  -> [25% swap + digit swap] -> [miner LLM pass 2] -> [LLM smoothing ("Comic lines")] -> stored.
 The scrambled transcript itself is never stored; only these generated, re-scrambled lines are.
 """
 import re
@@ -48,6 +48,29 @@ async def mine_sentences(scrambled: str) -> List[str]:
 
 
 async def _mine_batch(sentences: List[str]) -> List[str]:
+    first = await _mine(sentences)
+    if not first:
+        # ponytail: LLM down = these sentences are dropped; add a local fallback if outages are common.
+        logger.warning(f"Miner got no LLM content; dropped {len(sentences)} sentence(s).")
+        return []
+    # Second scramble (POS swap + digit swap) is CPU work: keep it off the event loop
+    lines = await asyncio.to_thread(
+        lambda: [scramble_text(_content(i), settings.POS_SCRAMBLE_RATE) for i in first])
+    second = await _mine(lines)
+    if len(second) != len(lines):
+        # The scrambled lines are already private; they just skip the second riff.
+        logger.warning("Second mining pass got no usable LLM output; keeping the scrambled first pass.")
+        second = [{**i, "content": line} for i, line in zip(first, lines)]
+    smoothed = await _smooth([_content(i) for i in second])
+    return [format_row(i, line) for i, line in zip(second, smoothed)]
+
+
+def _content(item: dict) -> str:
+    return str(item.get("content") or "")
+
+
+async def _mine(sentences: List[str]) -> List[dict]:
+    """One miner LLM call: a {vibe, energy, content} dict per sentence (fewer if the model misbehaves)."""
     from server.story.narrative_engine import narrative_engine
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
     prompt = f"""Overheard sentences:
@@ -61,15 +84,7 @@ For EACH sentence, in order, write:
 Output: {{"sentences": [{{"vibe": "...", "energy": "...", "content": "..."}}]}} with exactly {len(sentences)} entries."""
     result = await narrative_engine._call_llama_cpp(SYSTEM_PROMPT, prompt, settings.MINER_LLAMA_URL)
     items = (result or {}).get("sentences") or []
-    if not items:
-        # ponytail: LLM down = these sentences are dropped; add a local fallback if outages are common.
-        logger.warning(f"Miner got no LLM content; dropped {len(sentences)} sentence(s).")
-    items = [i for i in items[:len(sentences)] if isinstance(i, dict)]
-    # Second scramble (POS swap + digit swap) is CPU work: keep it off the event loop
-    lines = await asyncio.to_thread(
-        lambda: [scramble_text(str(i.get("content") or ""), settings.POS_SCRAMBLE_RATE) for i in items])
-    lines = await _smooth(lines)
-    return [format_row(i, line) for i, line in zip(items, lines)]
+    return [i for i in items[:len(sentences)] if isinstance(i, dict)]
 
 
 async def _smooth(lines: List[str]) -> List[str]:

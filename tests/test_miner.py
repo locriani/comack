@@ -15,27 +15,37 @@ class TestMiner(unittest.TestCase):
         with patch.object(narrative_engine, "_call_llama_cpp", AsyncMock(return_value=llm)), \
              patch.object(thematic_miner, "scramble_text", lambda t, rate: f"~{t}~"):
             rows = asyncio.run(thematic_miner.mine_sentences("Who moved it? I did."))
-        self.assertEqual(rows, [   # the LLM's content gets the second scramble; the tag doesn't
-            "[VERY DEEPLY SUSPICIOUS • HIGH] ~The toaster knows.~",   # smoothing got no "lines":
-            "[CALM • MEDIUM] ~Pass the kazoo.~",                     # scrambled lines kept
+        self.assertEqual(rows, [   # smoothing got no "lines": the second pass's lines are kept
+            "[VERY DEEPLY SUSPICIOUS • HIGH] The toaster knows.",
+            "[CALM • MEDIUM] Pass the kazoo.",
         ])
 
-    def test_smoothing_pass_rewrites_the_scrambled_lines(self):
+    def test_mine_scramble_mine_smooth(self):
         llm = AsyncMock(side_effect=[
-            {"sentences": [{"vibe": "calm", "energy": "low", "content": "Pass the kazoo."}]},
-            {"lines": ["Pass the smooth kazoo."]},
+            {"sentences": [{"vibe": "a", "energy": "low", "content": "one"}]},    # miner pass 1
+            {"sentences": [{"vibe": "b", "energy": "high", "content": "two"}]},   # miner pass 2
+            {"lines": ["three"]},                                                 # smoothing
         ])
         with patch.object(narrative_engine, "_call_llama_cpp", llm), \
              patch.object(thematic_miner, "scramble_text", lambda t, rate: f"~{t}~"):
             rows = asyncio.run(thematic_miner.mine_sentences("Pass it."))
-        self.assertIn("~Pass the kazoo.~", llm.await_args.args[1])   # smoothing sees the scrambled line
-        self.assertEqual(rows, ["[CALM • LOW] Pass the smooth kazoo."])
+        pass2, smooth = (c.args[1] for c in llm.await_args_list[1:])
+        self.assertIn("~one~", pass2)                                   # pass 2 mines the scrambled pass 1
+        self.assertIn("two", smooth)
+        self.assertNotIn("~two~", smooth)                               # no scramble before smoothing
+        self.assertEqual(rows, ["[B • HIGH] three"])
+
+    def test_second_pass_down_keeps_the_scrambled_first_pass(self):
+        llm = AsyncMock(side_effect=[{"sentences": [{"vibe": "a", "energy": "low", "content": "one"}]}, None, None])
+        with patch.object(narrative_engine, "_call_llama_cpp", llm), \
+             patch.object(thematic_miner, "scramble_text", lambda t, rate: f"~{t}~"):
+            self.assertEqual(asyncio.run(thematic_miner.mine_sentences("Pass it.")), ["[A • LOW] ~one~"])
 
     def test_long_transcripts_are_mined_in_batches(self):
         llm = AsyncMock(return_value={"sentences": [{"vibe": "x", "energy": "low", "content": "y"}] * 12})
         with patch.object(narrative_engine, "_call_llama_cpp", llm):
             rows = asyncio.run(thematic_miner.mine_sentences(" ".join(["Hi."] * 30)))
-        self.assertEqual(llm.await_count, 6)   # 3 batches x (mine + smooth)
+        self.assertEqual(llm.await_count, 9)   # 3 batches x (mine + mine + smooth)
         self.assertEqual(len(rows), 30)
 
     def test_llm_down_stores_nothing(self):
