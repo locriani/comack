@@ -27,7 +27,7 @@ set(REQUIRES
     esp_timer
     lwip
     mbedtls
-    json
+    cjson
     driver
     esp_driver_tsens
     esp_http_server
