@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <HTTPClient.h>
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
@@ -11,6 +12,7 @@
 // Hardware drivers
 MicSampler mic;
 EPDDisplay epd;
+WiFiMulti wifiMulti;
 
 // WebSockets clients
 WebSocketsClient wsAudio;
@@ -118,22 +120,25 @@ void setup() {
     mic.begin();
     epd.begin();
 
-    // 3. Connect Wi-Fi
-    Serial.printf("[MAIN] Connecting to Wi-Fi: %s\n", WIFI_SSID);
+    // 3. Connect Wi-Fi (Multi-AP: Example-WiFi-1 / Example-WiFi-2)
+    Serial.println("[MAIN] Initializing Wi-Fi...");
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    wifiMulti.addAP(WIFI_SSID_1, WIFI_PASS_1);
+    wifiMulti.addAP(WIFI_SSID_2, WIFI_PASS_2);
 
+    Serial.printf("[MAIN] Searching for available networks (%s / %s)...\n", WIFI_SSID_1, WIFI_SSID_2);
     int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    while (wifiMulti.run() != WL_CONNECTED && attempts < 30) {
         delay(500);
         Serial.print(".");
         attempts++;
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\n[MAIN] Wi-Fi connected! IP: " + WiFi.localIP().toString());
+        Serial.printf("\n[MAIN] Wi-Fi connected to: %s | IP: %s\n", 
+                      WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
     } else {
-        Serial.println("\n[MAIN] Wi-Fi connection timed out. Will retry in loop.");
+        Serial.println("\n[MAIN] Wi-Fi connection timed out. Will auto-retry in loop.");
     }
 
     // 4. Setup WebSockets
@@ -160,6 +165,11 @@ void setup() {
 }
 
 void loop() {
+    // Ensure Wi-Fi connection is maintained across available SSIDs
+    if (WiFi.status() != WL_CONNECTED) {
+        wifiMulti.run();
+    }
+
     wsAudio.loop();
     wsEvents.loop();
 

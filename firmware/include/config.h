@@ -3,14 +3,20 @@
 
 // ==========================================
 // Network & Comack Server Configuration
-// ==========================================
-#define WIFI_SSID           "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD       "YOUR_WIFI_PASSWORD"
+// Wi-Fi Configuration (Primary + Fallback)
+#define WIFI_SSID_1         "Example-WiFi-1"
+#define WIFI_PASS_1         "REDACTED_WIFI_PASS"
+#define WIFI_SSID_2         "Example-WiFi-2"
+#define WIFI_PASS_2         "REDACTED_WIFI_PASS"
 
-// Deskserver Host Configuration
-// If on local LAN: use hostname "comack-server.local" or IP e.g. "192.168.1.100"
-#define COMACK_SERVER_HOST  "comack-server.local"
+// Deskserver Host Configuration (Tailscale IP)
+#define COMACK_SERVER_HOST  "100.64.0.1"
 #define COMACK_SERVER_PORT  8000
+
+// Tailscale Authentication Configuration
+// Generate an auth key at: https://login.tailscale.com/admin/settings/keys
+#define TAILSCALE_AUTH_KEY      "tskey-auth-REDACTED"
+#define TAILSCALE_DEVICE_NAME   "comack-display"
 
 // Audio Streaming Sample Rate
 #define AUDIO_SAMPLE_RATE   16000
