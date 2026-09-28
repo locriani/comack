@@ -202,7 +202,11 @@ class FluxGenerator:
         if is_flux:
             kwargs["max_sequence_length"] = 512
 
+        from server.story.narrative_engine import prompt_log
+        entry = {"at": time.time(), "model": settings.FLUX_MODEL_ID, "system": "", "prompt": prompt, "output": None}
+        prompt_log.append(entry)
         raw_img = pipe(**kwargs).images[0]
+        entry["output"] = f"[{gen_w}x{gen_h} image, {steps} steps]"
         # Convert to grayscale and enhance contrast for clean 1-bit dithering
         from PIL import ImageOps, ImageEnhance
         gray_img = raw_img.convert("L")

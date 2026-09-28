@@ -20,7 +20,7 @@ from server.audio.vad import AudioVAD, SpeechSegment
 from server.audio.transcriber import Transcriber, TriggerListener
 from server.privacy.thematic_miner import mine_sentences
 from server.privacy.pos_scrambler import pools
-from server.story.narrative_engine import narrative_engine
+from server.story.narrative_engine import narrative_engine, prompt_log
 from server.render.comic_compositor import comic_compositor
 from server.dispatcher.sneaky_dispatcher import SneakyDispatcher
 
@@ -410,6 +410,12 @@ async def get_issue_bin(issue_number: int):
 @app.get("/api/transcripts/recent")
 async def get_recent_transcripts():
     return db.get_unprocessed_transcripts()
+
+
+@app.get("/api/prompts")
+async def get_prompts():
+    """Recent LLM and image prompts with their outputs, newest first (memory only)."""
+    return list(reversed(prompt_log))
 
 
 @app.post("/api/comics/generate")

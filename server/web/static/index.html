@@ -175,6 +175,17 @@
 
     </div>
 
+    <!-- Prompt Debug Log (server memory only; transcripts appear only after the first scramble) -->
+    <div class="lg:col-span-12 bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-bold">Model Prompts &amp; Outputs</span>
+        <span id="promptCount" class="text-xs mono text-gray-400">0 calls</span>
+      </div>
+      <div id="promptList" class="max-h-[600px] overflow-y-auto space-y-1.5 text-xs mono">
+        <div class="text-gray-500 italic">No model calls since the server started.</div>
+      </div>
+    </div>
+
   </main>
 
   <script>
@@ -353,6 +364,40 @@
       }
     }
 
+    async function loadPrompts() {
+      try {
+        const entries = await (await fetch('/api/prompts')).json();
+        const list = document.getElementById('promptList');
+        if (entries.length === 0) return;
+        const open = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.at));
+        list.replaceChildren(...entries.map(e => {
+          const d = document.createElement('details');
+          d.dataset.at = String(e.at);
+          d.open = open.has(d.dataset.at);
+          d.className = 'p-2 rounded bg-gray-900/60 border border-gray-800';
+          const s = document.createElement('summary');
+          s.className = 'cursor-pointer text-gray-300 truncate';
+          s.textContent = `${new Date(e.at * 1000).toLocaleTimeString()} • ${e.model} • ${e.prompt.slice(0, 90)}`;
+          d.append(s);
+          for (const [label, text] of [['SYSTEM', e.system], ['PROMPT', e.prompt], ['OUTPUT', e.output ?? '(waiting for the model…)']]) {
+            if (!text) continue;
+            const h = document.createElement('div');
+            h.className = 'text-[10px] font-bold text-indigo-400 mt-2';
+            h.textContent = label;
+            const pre = document.createElement('pre');
+            pre.className = 'whitespace-pre-wrap text-gray-200';
+            pre.textContent = text;
+            d.append(h, pre);
+          }
+          return d;
+        }));
+        document.getElementById('promptCount').textContent = `${entries.length} calls`;
+      } catch (e) {
+        console.error('Error loading prompts:', e);
+      }
+    }
+    setInterval(loadPrompts, 5000);
+
     // Polling heartbeat for silence timer
     setInterval(async () => {
       try {
@@ -365,6 +410,7 @@
     // Initial load
     initWebSocket();
     loadHistory();
+    loadPrompts();
   </script>
 </body>
 </html>

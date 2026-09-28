@@ -10,12 +10,17 @@ import time
 import random
 import logging
 import httpx
+from collections import deque
 from typing import Dict, Any, List, Optional
 from server.config import settings
 from server.storage import db
 from server.render.comic_compositor import LAYOUTS, resolve_layout
 
 logger = logging.getLogger("comack.story")
+
+# Recent model prompts and outputs for the dashboard's debug view. The miner's prompts hold
+# the first-pass scrambled transcript, which may not be stored: this lives in memory only.
+prompt_log: deque = deque(maxlen=60)
 
 LAYOUT_MENU = "\n".join(f'   - "{name}" ({len(p)} panel{"s" * (len(p) > 1)}): {use}'
                         for name, (use, p) in LAYOUTS.items())
@@ -251,7 +256,9 @@ TASK:
             "temperature": 0.85,
             "response_format": {"type": "json_object"}
         }
-        
+        entry = {"at": time.time(), "model": url, "system": system_prompt, "prompt": user_prompt, "output": None}
+        prompt_log.append(entry)
+
         try:
             # Reasoning model with thinking on: generation can take minutes.
             async with httpx.AsyncClient(timeout=600.0) as client:
@@ -260,6 +267,7 @@ TASK:
                 if resp.status_code == 200:
                     data = resp.json()
                     content = data["choices"][0]["message"]["content"]
+                    entry["output"] = content
                     # Extract JSON block if wrapped in markdown
                     if "```json" in content:
                         content = content.split("```json")[1].split("```")[0].strip()
@@ -267,8 +275,10 @@ TASK:
                         content = content.split("```")[1].split("```")[0].strip()
                     return json.loads(content)
                 else:
+                    entry["output"] = f"HTTP {resp.status_code}: {resp.text}"
                     logger.warning(f"llama.cpp returned status {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
+            entry["output"] = entry["output"] or f"error: {e!r}"
             logger.warning(f"Failed to query llama.cpp at {url}: {e}")
             
         # Try OpenRouter fallback if configured
