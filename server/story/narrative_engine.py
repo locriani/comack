@@ -40,6 +40,21 @@ PREMISE_SEEDS = [
 ]
 
 
+def story_so_far(comics: List[Dict[str, Any]]) -> str:
+    """On-panel text of previous issues (oldest first) so each new issue continues the plot."""
+    lines = []
+    for c in comics:
+        lines.append(f"Issue #{c['issue_number']}: {c['title']}")
+        for p in json.loads(c["script_json"]).get("panels", []):
+            if p.get("narration"):
+                lines.append(f"  [Caption] {p['narration']}")
+            for b in p.get("speech_balloons") or []:
+                lines.append(f"  {b.get('character', '?')}: {b.get('text', '')}")
+            if p.get("sound_effect"):
+                lines.append(f"  [SFX] {p['sound_effect']}")
+    return "\n".join(lines)
+
+
 class NarrativeEngine:
     def __init__(self):
         pass
@@ -92,7 +107,9 @@ class NarrativeEngine:
         arc_progress = min(1.0, elapsed_hours / max(1.0, arc["target_duration_hours"]))
         
         mined_elements = [item["scrambled_text"] for item in transcript_items if item.get("scrambled_text")]
-        
+        # ponytail: last 50 issues keeps the prompt bounded (~15k tokens); summarize older ones if the plot drifts.
+        history = story_so_far(db.get_recent_comics(50)[::-1])
+
         system_prompt = (
             "You are the master creator of 'COMACK', an ongoing, surreal comic strip that transforms "
             "ambient room vibes and mined thematic elements into a continuous, absurdist graphic narrative. "
@@ -109,6 +126,9 @@ Genre: {arc['genre']}
 Arc Premise: {arc['premise']}
 Arc Progress: {arc_progress * 100:.1f}% (Hour {elapsed_hours:.1f} of {arc['target_duration_hours']}h)
 Issue Number: #{issue_number}
+
+Story So Far (text of every previous issue, oldest first). Continue this plot directly: keep the same characters, running jokes, and unresolved threads:
+{history or '(Nothing yet. This is the very first issue.)'}
 
 Mined Thematic Elements & Emotional Vibes from the past 30 minutes:
 {json.dumps(mined_elements, indent=2) if mined_elements else '["(Eerie room silence... only the ambient hum of quantum machinery)"]'}
