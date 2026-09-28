@@ -49,6 +49,21 @@ class TestComicCompositor(unittest.TestCase):
             for f in files:
                 f.unlink()
 
+    def test_originals_are_served_and_nothing_else(self):
+        from fastapi.testclient import TestClient
+        from server.config import COMICS_DIR
+        from server.main import app
+        client = TestClient(app)
+        color = COMICS_DIR / "issue_0996_color.png"
+        Image.new("RGB", (8, 8), (1, 2, 3)).save(color)
+        try:
+            self.assertEqual(client.get("/api/comics/996/color.png").status_code, 200)
+            for bad in ("/api/comics/996/panel1.png", "/api/comics/996/bin.png",
+                        "/api/comics/996/..%2Fissue_0996_color.png"):
+                self.assertEqual(client.get(bad).status_code, 404, bad)
+        finally:
+            color.unlink()
+
     def test_redraw_header_changes_only_the_banner(self):
         script = {"issue_number": 997, "title": "Hdr", "layout_type": "splash", "panels": [panel(1)]}
         png_path, bin_path = comic_compositor.compose_comic(script)

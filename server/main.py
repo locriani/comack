@@ -3,6 +3,7 @@ Comack Main Server.
 FastAPI application with WebSocket audio streaming, real-time VAD,
 30-minute comic cycle scheduler, sneaky silence dispatcher, and REST API.
 """
+import re
 import time
 import json
 import asyncio
@@ -404,6 +405,15 @@ async def get_issue_png(issue_number: int):
     path = COMICS_DIR / f"issue_{issue_number:04d}.png"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Issue #{issue_number} PNG not found")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/comics/{issue_number}/{original}.png")
+async def get_issue_original(issue_number: int, original: str):
+    """The saved originals: the color page before halftoning, and each panel's raw model art."""
+    path = COMICS_DIR / f"issue_{issue_number:04d}_{original}.png"
+    if not re.fullmatch(r"color|panel\d", original) or not path.exists():
+        raise HTTPException(status_code=404, detail=f"Issue #{issue_number} has no {original} image")
     return FileResponse(path, media_type="image/png")
 
 

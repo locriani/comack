@@ -237,7 +237,7 @@ class Database:
             "SELECT id, title, genre, premise, status, metadata_json FROM story_arcs ORDER BY id")]
         for arc in arcs:
             arc["comics"] = [dict(r) for r in conn.execute(
-                "SELECT issue_number, title, layout_type, status, created_at, "
+                "SELECT issue_number, title, layout_type, panel_count, status, created_at, "
                 "ROW_NUMBER() OVER (ORDER BY issue_number) AS series_issue FROM comics "
                 "WHERE arc_id = ? ORDER BY issue_number", (arc["id"],))]
         conn.close()

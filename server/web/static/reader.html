@@ -23,8 +23,13 @@
     .arc h2 { margin: 0; font-size: 20px; }
     .arc p { margin: 4px 0 0; color: var(--dim); font-size: 13px; }
     .page { background: #e2e4e9; border-radius: 10px; padding: 10px; }
-    .page img { display: block; width: 100%; height: auto; aspect-ratio: 800 / 480; background: #fff; border-radius: 4px;
-                image-rendering: pixelated; }
+    .page img { display: block; width: 100%; height: auto; aspect-ratio: 800 / 480; background: #fff; border-radius: 4px; }
+    .page img.eink { image-rendering: pixelated; }
+    .view { display: flex; gap: 6px; }
+    .view button.on { border-color: var(--accent); color: var(--accent); }
+    .panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+    .panels img { display: block; width: 100%; height: auto; border-radius: 4px; border: 1px solid var(--line); }
+    .panels:empty { display: none; }
     .nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
     .nav .group { display: flex; gap: 6px; }
     .issue { font-size: 13px; color: var(--dim); text-align: center; flex: 1; min-width: 160px; }
@@ -49,7 +54,12 @@
         <h2 id="arcTitle"></h2>
         <p id="arcMeta"></p>
       </div>
+      <div class="view" style="margin-bottom:8px">
+        <button id="viewEink" title="What the e-ink display shows">E-ink</button>
+        <button id="viewColor" title="The page before halftoning">Colour</button>
+      </div>
       <div class="page"><img id="page" alt=""></div>
+      <div class="panels" id="panels" style="margin-top:12px" aria-label="Raw panel art"></div>
       <div class="nav" style="margin-top:12px">
         <div class="group">
           <button id="prevArc" title="Previous arc">« Arc</button>
@@ -66,7 +76,7 @@
   </main>
 
   <script>
-    let arcs = [], issues = [], at = 0;
+    let arcs = [], issues = [], at = 0, color = false;
     const $ = id => document.getElementById(id);
 
     async function load() {
@@ -83,8 +93,20 @@
     function show(k) {
       at = Math.max(0, Math.min(issues.length - 1, k));
       const c = issues[at], arc = c.arc;
-      $('page').src = `/api/comics/${c.issue_number}/png`;
+      const base = `/api/comics/${c.issue_number}`;
+      $('page').onerror = color ? () => { $('page').onerror = null; $('page').src = `${base}/png`; $('page').className = 'eink'; } : null;
+      $('page').src = color ? `${base}/color.png` : `${base}/png`;   // issues before originals were kept fall back to e-ink
+      $('page').className = color ? '' : 'eink';
       $('page').alt = c.title;
+      $('viewEink').className = color ? '' : 'on';
+      $('viewColor').className = color ? 'on' : '';
+      $('panels').replaceChildren(...Array.from({ length: c.panel_count }, (_, i) => {
+        const a = Object.assign(document.createElement('a'), { href: `${base}/panel${i + 1}.png`, target: '_blank' });
+        const img = Object.assign(document.createElement('img'), { src: a.href, alt: `Panel ${i + 1}, raw`, loading: 'lazy' });
+        img.onerror = () => a.remove();   // procedural panels and older issues have no raw art
+        a.append(img);
+        return a;
+      }));
       $('arcTitle').textContent = arc.title;
       $('arcMeta').textContent = `${arc.genre} · ${arc.status.toLowerCase()} · ${arc.premise}`;
       $('issueLabel').replaceChildren(
@@ -111,6 +133,8 @@
     const toArc = arc => show(issues.findIndex(c => c.arc === arc));
     const arcStep = d => toArc(arcs[arcs.indexOf(issues[at].arc) + d]);
 
+    $('viewEink').onclick = () => { color = false; show(at); };
+    $('viewColor').onclick = () => { color = true; show(at); };
     $('prev').onclick = () => show(at - 1);
     $('next').onclick = () => show(at + 1);
     $('prevArc').onclick = () => arcStep(-1);
