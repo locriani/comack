@@ -33,68 +33,26 @@ def expire_prompt_log():
 LAYOUT_MENU = "\n".join(f'   - "{name}" ({len(p)} panel{"s" * (len(p) > 1)}): {use}'
                         for name, (use, p) in LAYOUTS.items())
 
-# Diverse genres for shifting narrative universe seeds
-ARC_GENRES = [
-    "Existential Noir",
-    "Bureaucratic Space Opera",
-    "Victorian Gothic Slapstick",
-    "Subterranean Cyberpunk",
-    "Melodramatic Soap Opera of Inanimate Objects",
-    "Cryptid Small-Town Mystery",
-    "Culinary Occult Sci-Fi",
-    "1970s Disco Espionage",
-    "Post-Apocalyptic Etiquette Guide",
-    "Time-Traveling Jazz Tragedy",
-    "Suburban Kaiju Sitcom",
-    "Medieval Tech Support Epic",
-    "Deep-Sea Corporate Thriller",
-    "Haunted Strip-Mall Western",
-    "Interdimensional Cooking Competition",
-    "Gothic Romance Among Office Supplies",
-    "Antarctic Heist Caper",
-    "Prehistoric Courtroom Drama",
-    "Lunar Colony Farce",
-    "Pirate Radio Revolution",
-    "Clockwork Detective Procedural",
-    "Nature Documentary Gone Rogue",
-    "Retirement-Home Superhero Saga",
-    "Noir Musical of Sentient Weather",
-    "Espionage at the County Fair",
-    "Cosmic Horror HOA Meeting",
-    "Wizard Academy Budget Crisis",
-    "Soviet-Era Space Sitcom",
-    "Mythological Road Trip",
-    "Dinner-Party Murder Mystery Aboard a Zeppelin"
-]
+BIBLE_KEYS = ("title", "genre", "premise", "tone", "art_style")
 
-PREMISE_SEEDS = [
-    "A retired space admiral and a sentient percolator run an interstellar laundromat that folds space-time.",
-    "A world-weary trench-coat detective investigates why all the furniture in Apartment 4B is plotting a mutiny.",
-    "A team of clandestine underground botanists must deliver the world's last sarcastic fern to Neo-Chicago.",
-    "Two Victorian inventors keep accidentally inventing kitchen appliances that open portals to the year 3042.",
-    "A crew of deep-sea submariners discovers that the ocean floor is made entirely of unreturned library books.",
-    "An unhinged weather forecaster realizes that the clouds are spelling out petty office gossip in Morse code.",
-    "A lighthouse keeper discovers the lighthouse has been quietly unionizing the seagulls.",
-    "The last working vending machine on Earth demands tribute before dispensing snacks.",
-    "A retired dragon opens a strictly unlicensed dental practice in a suburban garage.",
-    "A committee of ghosts cannot agree on how to haunt a house with an open-plan layout.",
-    "An elevator in a 90-story tower has declared independence between floors 42 and 43.",
-    "Two rival mimes are forced to share a single invisible box for the rest of their lives.",
-    "A diner's jukebox only plays songs from next week, and they are getting worse.",
-    "A houseplant is elected mayor on a technicality and takes the job very seriously.",
-    "A time-traveling accountant keeps getting audited by his own future self.",
-    "A haunted Roomba maps the house and finds a room nobody has ever seen.",
-    "A small-town bakery accidentally bakes a loaf of sourdough that achieves sentience.",
-    "The moon files a formal noise complaint against the tides.",
-    "An elite squad of retired librarians is reactivated to shush an approaching comet.",
-    "A pigeon courier network is the only thing standing between the city and total chaos.",
-    "A cursed karaoke machine forces anyone who sings to tell the truth.",
-    "The world's most boring superhero must stop a villain powered by excitement.",
-    "An IKEA showroom turns out to be infinitely large, and a family is lost inside it.",
-    "A washed-up magician's rabbit is finally ready to go solo.",
-    "A submarine crew realizes their periscope only shows reruns of 1970s game shows.",
-    "Every clock in town starts running on a different, strongly held opinion of time."
-]
+
+def arc_bible_prompt(past_arcs: List[Dict[str, Any]]) -> str:
+    """Asks for a brand-new series, unlike every arc listed."""
+    past = []
+    for a in past_arcs:
+        meta = json.loads(a.get("metadata_json") or "{}")
+        style = "; ".join(s for s in (meta.get("tone"), meta.get("art_style")) if s)
+        past.append(f"- {a['title']} ({a['genre']}{'; ' + style if style else ''}): {a['premise']}")
+    return f"""Previous series (do NOT reuse their genres, tones, art styles, settings, or characters):
+{chr(10).join(past) or "- (none yet)"}
+
+Invent a completely new comic series. Draw from the whole range of comics and storytelling:
+any genre, era, audience, and kind of humor or drama. Avoid deadpan melodrama and film noir.
+It is drawn in black and white on a 1-bit e-ink screen, so pick an art style that survives that.
+Output: {{"title": "the series title", "genre": "a few words", "premise": "one or two sentences",
+"tone": "how the story is told: voice, kind of humor or drama, how the characters behave",
+"art_style": "the visual style, as a phrase an image model understands",
+"cast": ["Name: one-line description"]}}"""
 
 
 def lines_wanted(script: Dict[str, Any]) -> int:
@@ -134,19 +92,22 @@ class NarrativeEngine:
             logger.info(f"Arc '{arc['title']}' completed after {used} panels. Seeding new arc.")
             db.conclude_arc(arc["id"])
 
+        # The arc's length is fixed here; the script model never decides when it ends.
         target_panels = random.randint(settings.ARC_MIN_PANELS, settings.ARC_MAX_PANELS)
-        genre = random.choice(ARC_GENRES)
-        premise = random.choice(PREMISE_SEEDS)
-        title = genre  # placeholder until the LLM names the arc in its first script
+        bible = await self._call_llama_cpp("You invent comic series. Output ONLY valid JSON.",
+                                           arc_bible_prompt(db.get_arcs()[-12:]))
+        if not bible or not all(str(bible.get(k) or "").strip() for k in BIBLE_KEYS):
+            raise RuntimeError("the LLM did not invent a new arc; the next cycle retries")
+        bible = {k: str(bible[k]).strip() for k in BIBLE_KEYS} | {"cast": [str(c) for c in bible.get("cast") or []][:8]}
 
         arc_id = db.create_arc(
-            title=title,
-            genre=genre,
-            premise=premise,
+            title=bible["title"],
+            genre=bible["genre"],
+            premise=bible["premise"],
             target_panels=target_panels,
-            metadata={"created_seed": premise}
+            metadata={k: bible[k] for k in ("tone", "art_style", "cast")}
         )
-        logger.info(f"New story arc #{arc_id} seeded: '{title}' ({genre}), target {target_panels} panels")
+        logger.info(f"New story arc #{arc_id}: '{bible['title']}' ({bible['genre']}), target {target_panels} panels")
         return db.get_active_arc()
 
     async def generate_comic_script(self, transcript_items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -169,48 +130,48 @@ class NarrativeEngine:
             f"keep the same characters, running jokes, and unresolved threads:\n{history}\n\n"
         ) if history else ""
 
+        meta = json.loads(arc.get("metadata_json") or "{}")
+        tone = meta.get("tone") or "whatever best fits the genre"
+        art_style = meta.get("art_style") or "bold black-and-white ink"
+        cast = "\nCast:" + "".join(f"\n- {c}" for c in meta["cast"]) if meta.get("cast") else ""
+
         system_prompt = (
-            "You are the master creator of 'COMACK', an ongoing, surreal comic strip that transforms "
-            "ambient room vibes and mined thematic elements into a continuous, absurdist graphic narrative. "
+            f"You write {arc['title']!r}, a {arc['genre']} comic series. Tone: {tone}. "
+            f"Art style: {art_style}. Stay true to both in every issue. "
             "You are given room notes: a vibe, an energy level, and a surreal line riffing on something "
             "overheard in the room (some words swapped for absurd substitutes). Put those lines, swaps and all, "
-            "into characters' mouths, captions, and situations, twisted to fit the active story arc. "
-            "Characters treat ridiculous events with total, deadpan melodrama and serious urgency. "
+            "into characters' mouths, captions, and situations, twisted to fit the story. "
             "You must output ONLY valid, parseable JSON conforming strictly to the requested schema."
         )
-        
-        needs_name = not json.loads(arc.get("metadata_json") or "{}").get("named")
-        name_task = ('\n5. This arc has no title yet. Name it in "arc_title": a punchy, deadpan series title '
-                     'that fits the genre and premise.') if needs_name else ""
 
         prompt_content = f"""
-Current Narrative Arc #{arc['id']}: {"(untitled)" if needs_name else repr(arc['title'])}
+Series: {arc['title']}
 Genre: {arc['genre']}
-Arc Premise: {arc['premise']}
-Arc Progress: {arc_progress * 100:.1f}% ({panels_used} of {arc['target_panels']} panels drawn)
+Premise: {arc['premise']}{cast}
+Arc Progress: {arc_progress * 100:.1f}% ({panels_used} of {arc['target_panels']} panels drawn).
+  The arc ends when {arc['target_panels']} panels are drawn: pace the story to land there.
 Issue Number: #{issue_number}
 
 {history_section}Room notes since the last issue ([VIBE • ENERGY] line):
-{json.dumps(mined_elements, indent=2) if mined_elements else '["(Eerie room silence... only the ambient hum of quantum machinery)"]'}
+{json.dumps(mined_elements, indent=2, ensure_ascii=False) if mined_elements else '["(Eerie room silence... only the ambient hum of quantum machinery)"]'}
 
 TASK:
 1. Plan the story beats this issue needs, then choose the page layout whose shape serves them
    (pacing, number of beats, energy). Write exactly as many panels as the layout has:
 {LAYOUT_MENU}
-2. Provide descriptive visual prompts for black-and-white ink comic illustrations, specifically optimized for a 1-bit monochrome e-ink display:
-   - Emphasize bold silhouettes, strong foreground/background contrast, and distinct outlines.
-   - Describe scenes with stark black shadows, bright white highlights, crosshatching, halftone dots, or woodcut engraving textures.
-   - Avoid subtle color nuances, smoky haze, or smooth gray gradients that turn into muddy noise when dithered to 1-bit.
+2. Write each scene_description as an image prompt in the series' art style, adapted to a 1-bit black-and-white e-ink display:
+   - Bold silhouettes, strong foreground/background contrast, solid blacks and clean whites.
+   - No subtle color nuances, haze, or smooth gray gradients: they dither into muddy noise.
 3. Decide how many room notes to collect before the next issue ("lines_wanted_next", 1-30):
    fewer for a fast, punchy beat; more to let the next issue build from a richer stretch of the room.
-4. Output STRICT JSON in this exact structure{' (plus "arc_title")' if needs_name else ''}:
+4. Output STRICT JSON in this exact structure:
 {{
-  "title": "A witty, deadpan issue title",
+  "title": "This issue's title, in the series' voice",
   "layout_type": "one of the layout names above",
   "panels": [
     {{
       "panel_number": 1,
-      "scene_description": "Most important subject first: characters, action, setting, stark shadows, crosshatching",
+      "scene_description": "Most important subject first: characters, action, setting, in the series' art style",
       "narration": "Optional caption box text (e.g. 'Meanwhile, in Sector 9...')",
       "speech_balloons": [
         {{"character": "Character Name", "text": "Dialogue built from the room notes"}}
@@ -218,9 +179,8 @@ TASK:
       "sound_effect": "Optional comic SFX e.g. 'BZZZZT' or 'CLICK'"
     }}
   ],
-  "lines_wanted_next": 8,
-  "arc_status": "CONTINUE"
-}}{name_task}
+  "lines_wanted_next": 8
+}}
 """
 
         script = await self._call_llama_cpp(system_prompt, prompt_content)
@@ -229,17 +189,12 @@ TASK:
         if not script or "panels" not in script:
             script = self._create_fallback_script(issue_number, arc, mined_elements)
 
-        arc_title = arc["title"]
-        if needs_name and str(script.get("arc_title") or "").strip():
-            arc_title = str(script["arc_title"]).strip()
-            db.rename_arc(arc["id"], arc_title)
-
         layout = resolve_layout(script.get("layout_type", ""), len(script["panels"]))
         panels = script["panels"][:len(LAYOUTS[layout][1])]
         return {
             "issue_number": issue_number,
             "arc_id": arc["id"],
-            "arc_title": arc_title,
+            "arc_title": arc["title"],
             "title": script.get("title", f"Episode #{issue_number}"),
             "layout_type": layout,
             "panel_count": len(panels),

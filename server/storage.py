@@ -109,14 +109,6 @@ class Database:
         conn.commit()
         conn.close()
 
-    def rename_arc(self, arc_id: int, title: str):
-        """Set the LLM-given title and mark the arc named."""
-        conn = get_connection()
-        conn.execute("UPDATE story_arcs SET title = ?, metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.named', 1) "
-                     "WHERE id = ?", (title, arc_id))
-        conn.commit()
-        conn.close()
-
     def conclude_arc(self, arc_id: Optional[int] = None):
         """Conclude an arc (default: every active one) and wipe the room lines it used:
         the transcript rows and each comic's copy in its script."""
@@ -243,7 +235,7 @@ class Database:
         """Every arc, oldest first, each with its issues (no scripts) for the reader."""
         conn = get_connection()
         arcs = [dict(r) for r in conn.execute(
-            "SELECT id, title, genre, premise, status FROM story_arcs ORDER BY id")]
+            "SELECT id, title, genre, premise, status, metadata_json FROM story_arcs ORDER BY id")]
         for arc in arcs:
             arc["comics"] = [dict(r) for r in conn.execute(
                 "SELECT issue_number, title, layout_type, status, created_at FROM comics "
