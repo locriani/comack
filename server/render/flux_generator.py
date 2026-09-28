@@ -1,9 +1,10 @@
 """
 FLUX.1 [schnell] Comic Art Generator.
-Generates high-contrast, masterwork black-and-white ink illustrations for comic panels
-using local diffusers with FP8 / bfloat16 and CPU offload, or via ComfyUI endpoint.
+Exclusively uses black-forest-labs/FLUX.1-schnell for state-of-the-art
+high-contrast graphic novel panel illustrations.
 """
 import io
+import os
 import logging
 from typing import Optional, Tuple
 from pathlib import Path
@@ -13,30 +14,38 @@ from server.config import settings
 
 logger = logging.getLogger("comack.flux")
 
-_flux_pipeline = None
-_flux_failed = False
+_pipeline = None
+_pipeline_failed = False
 
 
-def _get_flux_pipeline():
-    """Lazy-load the FLUX.1 pipeline on first generation request."""
-    global _flux_pipeline, _flux_failed
-    if _flux_pipeline is not None or _flux_failed:
-        return _flux_pipeline
+def _load_flux_pipeline():
+    """Load the official black-forest-labs/FLUX.1-schnell pipeline."""
+    global _pipeline, _pipeline_failed
+    if _pipeline is not None or _pipeline_failed:
+        return _pipeline
         
     try:
         import torch
         from diffusers import FluxPipeline
         
-        logger.info(f"Loading FLUX.1 model: '{settings.FLUX_MODEL_ID}' on {settings.FLUX_DEVICE}...")
+        token = os.getenv("HF_TOKEN")
+        if not token:
+            token_path = Path.home() / ".cache" / "huggingface" / "token"
+            if token_path.exists():
+                token = token_path.read_text().strip()
+                
+        logger.info(f"Loading official FLUX.1 model: '{settings.FLUX_MODEL_ID}' (token present: {bool(token)})...")
         
-        torch_dtype = torch.bfloat16
+        # Load in bfloat16 for highest fidelity and memory balance
         pipe = FluxPipeline.from_pretrained(
             settings.FLUX_MODEL_ID,
-            torch_dtype=torch_dtype
+            torch_dtype=torch.bfloat16,
+            token=token
         )
         
+        # Enable CPU offload to coordinate between 24GB system RAM and GPU
         if settings.FLUX_ENABLE_CPU_OFFLOAD and torch.cuda.is_available():
-            logger.info("Enabling CPU offload for FLUX.1 to optimize VRAM...")
+            logger.info("Enabling CPU offload for FLUX.1...")
             pipe.enable_model_cpu_offload()
         elif torch.cuda.is_available() and settings.FLUX_DEVICE == "cuda":
             pipe.to("cuda")
@@ -45,17 +54,14 @@ def _get_flux_pipeline():
         else:
             pipe.to("cpu")
             
-        _flux_pipeline = pipe
-        logger.info("FLUX.1 pipeline loaded successfully.")
-    except Exception as e:
-        logger.warning(
-            f"Could not load local FLUX pipeline ({e}). "
-            f"Ensure torch and diffusers are installed on comack-server. Using line-art fallback."
-        )
-        _flux_failed = True
-        _flux_pipeline = None
+        _pipeline = pipe
+        logger.info("FLUX.1 [schnell] loaded successfully and ready for generation.")
+        return _pipeline
         
-    return _flux_pipeline
+    except Exception as e:
+        logger.error(f"Failed to load FLUX.1 [schnell] pipeline: {e}")
+        _pipeline_failed = True
+        return None
 
 
 class FluxGenerator:
@@ -65,25 +71,25 @@ class FluxGenerator:
     def generate_panel_art(self, scene_description: str, target_size: Tuple[int, int],
                            genre: str = "Graphic Novel") -> Optional[Image.Image]:
         """
-        Generate black-and-white comic panel artwork for a given scene description.
+        Generate black-and-white comic panel artwork using FLUX.1 [schnell].
         :param scene_description: Visual description from the story engine
         :param target_size: (width, height) in pixels
         :param genre: Comic genre context
         :return: PIL Image or None if model unavailable
         """
-        # 1. Check if external ComfyUI / HTTP endpoint is specified
+        # 1. External ComfyUI / HTTP endpoint if configured
         if settings.FLUX_API_URL:
             img = self._generate_via_api(scene_description, target_size)
             if img:
                 return img
 
-        # 2. Local diffusers pipeline
-        pipe = _get_flux_pipeline()
+        # 2. Local official FLUX.1 [schnell] pipeline
+        pipe = _load_flux_pipeline()
         if pipe is None:
             return None
             
         width, height = target_size
-        # Align dimensions to multiples of 16 for diffusion models
+        # Align dimensions to multiples of 16 for FLUX
         gen_w = (width // 16) * 16
         gen_h = (height // 16) * 16
         gen_w = max(256, min(1024, gen_w))
@@ -98,7 +104,7 @@ class FluxGenerator:
         )
         
         try:
-            logger.info(f"Generating panel with FLUX.1 ({gen_w}x{gen_h}, {settings.FLUX_INFERENCE_STEPS} steps)...")
+            logger.info(f"Generating panel with FLUX.1 [schnell] ({gen_w}x{gen_h}, {settings.FLUX_INFERENCE_STEPS} steps)...")
             result = pipe(
                 prompt=prompt,
                 width=gen_w,
@@ -108,8 +114,10 @@ class FluxGenerator:
                 max_sequence_length=256
             )
             raw_img = result.images[0]
-            # Resize exactly to target_size
-            return raw_img.resize((width, height), Image.Resampling.LANCZOS)
+            # Convert to grayscale for clean 1-bit e-paper dithering
+            gray_img = raw_img.convert("L")
+            # Resize exactly to panel target_size
+            return gray_img.resize((width, height), Image.Resampling.LANCZOS)
         except Exception as e:
             logger.error(f"Error during FLUX.1 panel generation: {e}")
             return None

@@ -6,7 +6,10 @@ tracks silence duration for 'Sneaky Comic Mode', and packages speech segments.
 import time
 import math
 import struct
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None
 from typing import Optional, Callable, List, Tuple
 from dataclasses import dataclass
 
@@ -57,12 +60,20 @@ class AudioVAD:
         """Compute Root Mean Square (RMS) energy of 16-bit signed PCM bytes."""
         if len(pcm_bytes) < 2:
             return 0.0
-        # Convert to numpy array of int16
-        samples = np.frombuffer(pcm_bytes, dtype=np.int16)
-        if len(samples) == 0:
-            return 0.0
-        mean_sq = np.mean(samples.astype(np.float64) ** 2)
-        return float(math.sqrt(mean_sq))
+        if np is not None:
+            # Convert to numpy array of int16
+            samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+            if len(samples) == 0:
+                return 0.0
+            mean_sq = np.mean(samples.astype(np.float64) ** 2)
+            return float(math.sqrt(mean_sq))
+        else:
+            num_samples = len(pcm_bytes) // 2
+            if num_samples == 0:
+                return 0.0
+            samples = struct.unpack(f"<{num_samples}h", pcm_bytes)
+            sum_sq = sum(s * s for s in samples)
+            return float(math.sqrt(sum_sq / num_samples))
 
     def process_chunk(self, pcm_bytes: bytes) -> Tuple[bool, float]:
         """

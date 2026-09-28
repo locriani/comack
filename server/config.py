@@ -4,7 +4,11 @@ Supports loading from environment variables and .env file.
 """
 import os
 from pathlib import Path
-from pydantic import BaseModel, Field
+try:
+    from pydantic import BaseModel
+except ImportError:
+    class BaseModel:
+        pass
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"

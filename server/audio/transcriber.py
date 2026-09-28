@@ -52,8 +52,13 @@ def pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
 
 
 class Transcriber:
-    def __init__(self, on_transcript_ready: Optional[Callable[[dict], None]] = None):
+    def __init__(
+        self, 
+        on_transcript_ready: Optional[Callable[[dict], None]] = None,
+        on_secret_trigger: Optional[Callable[[str], None]] = None
+    ):
         self.on_transcript_ready = on_transcript_ready
+        self.on_secret_trigger = on_secret_trigger
 
     def process_segment(self, segment: SpeechSegment):
         """Transcribe speech segment, mine abstract story elements, and wipe raw text/audio."""
@@ -66,6 +71,16 @@ class Transcriber:
             return
             
         clean_text = raw_text.strip()
+
+        # Check for secret trigger phrase: "alpha protocol" (triggers immediate new comic frame)
+        import re
+        if re.search(r'\balpha\s+protocol\b', clean_text, re.IGNORECASE):
+            logger.warning("🚨 [ALPHA PROTOCOL DETECTED] Secret trigger phrase identified in speech!")
+            if self.on_secret_trigger:
+                try:
+                    self.on_secret_trigger("alpha protocol")
+                except Exception as ex:
+                    logger.error(f"Error executing secret trigger callback: {ex}")
         
         # Mine abstract themes, emotional vibe, and surreal metaphors
         from server.privacy.thematic_miner import mine_story_elements

@@ -104,6 +104,18 @@ async def run_comic_generation_cycle() -> Dict[str, Any]:
     return comic_record
 
 
+async def _trigger_cycle_and_dispatch():
+    """Trigger an immediate comic generation cycle and immediately dispatch to display."""
+    try:
+        logger.info("⚡ Executing immediate comic generation cycle...")
+        await run_comic_generation_cycle()
+        if sneaky_dispatcher:
+            sneaky_dispatcher.force_dispatch()
+        logger.info("⚡ Immediate comic generation completed and dispatched to display!")
+    except Exception as e:
+        logger.error(f"Error executing immediate comic cycle: {e}")
+
+
 async def periodic_comic_scheduler():
     """Background task running every COMIC_CYCLE_MINUTES."""
     interval_seconds = settings.COMIC_CYCLE_MINUTES * 60
@@ -123,9 +135,23 @@ async def lifespan(app: FastAPI):
     global transcriber, vad, sneaky_dispatcher, cycle_task
     
     # 1. Initialize components
-    transcriber = Transcriber(on_transcript_ready=lambda t: broadcast_event({
-        "event": "NEW_TRANSCRIPT", "transcript": t
-    }))
+    loop = asyncio.get_running_loop()
+
+    def handle_secret_trigger(phrase: str):
+        logger.warning(f"🚨 [SECRET TRIGGER ACTIVATED] '{phrase.upper()}' detected in speech! Generating new frame immediately.")
+        broadcast_event({
+            "event": "SECRET_TRIGGER_ACTIVATED",
+            "phrase": phrase,
+            "message": f"Secret phrase '{phrase}' recognized! Generating new comic frame immediately."
+        })
+        loop.create_task(_trigger_cycle_and_dispatch())
+
+    transcriber = Transcriber(
+        on_transcript_ready=lambda t: broadcast_event({
+            "event": "NEW_TRANSCRIPT", "transcript": t
+        }),
+        on_secret_trigger=handle_secret_trigger
+    )
     
     vad = AudioVAD(
         sample_rate=16000,
@@ -243,6 +269,20 @@ async def get_system_status():
             "pos_scramble_rate": settings.POS_SCRAMBLE_RATE
         }
     }
+
+
+@app.post("/api/trigger")
+async def trigger_secret_phrase(payload: dict = None):
+    """Manually invoke secret trigger (e.g. 'alpha protocol') to generate a new frame immediately."""
+    phrase = (payload or {}).get("phrase", "alpha protocol")
+    logger.warning(f"🚨 Manual trigger invoked: '{phrase}'")
+    broadcast_event({
+        "event": "SECRET_TRIGGER_ACTIVATED",
+        "phrase": phrase,
+        "message": f"Secret trigger '{phrase}' activated. Generating immediate comic frame!"
+    })
+    asyncio.create_task(_trigger_cycle_and_dispatch())
+    return {"status": "ok", "message": f"Trigger '{phrase}' activated. Frame generation started."}
 
 
 @app.get("/api/comics/current")
