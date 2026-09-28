@@ -16,8 +16,8 @@ logger = logging.getLogger("comack.miner")
 ENERGIES = ("low", "medium", "high")
 
 SYSTEM_PROMPT = (
-    "You turn overheard room speech into raw material for a surreal comic strip. "
-    "Some words were already swapped for absurd ones; treat them as real. "
+    "You turn overheard room speech into raw material for a comic strip. "
+    "Some words were already swapped for random ones; treat them as real. "
     "Every line you write is a coherent, grammatical English sentence. "
     "Output ONLY valid JSON."
 )
@@ -25,13 +25,13 @@ SYSTEM_PROMPT = (
 MINE_TASK = """For EACH sentence, in order, write:
 - "vibe": its emotional vibe in at most 3 words
 - "energy": "low", "medium", or "high"
-- "content": a surreal comic line riffing on the sentence, keeping its key words.
+- "content": a comic line riffing on the sentence, keeping its key words.
   It MUST be coherent, grammatical English that makes sense on its own."""
 
 SMOOTH_TASK = """For EACH line, in order, write:
 - "vibe" and "energy": the ones in its [VIBE • ENERGY] tag
 - "content": the line rewritten as coherent, grammatical English that makes sense on its own.
-  Keep its words (including the odd ones) and its absurdity; change only what grammar needs."""
+  Keep its words (including the odd ones); change only what grammar needs."""
 
 
 def split_sentences(text: str) -> List[str]:

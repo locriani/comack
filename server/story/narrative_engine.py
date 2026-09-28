@@ -2,7 +2,7 @@
 Story Lorekeeper & Narrative Continuity Engine.
 Connects to llama.cpp (OpenAI-compatible /v1 endpoint) on comack-server.
 Maintains story arcs with dynamic lifespans (4 hours to 7 days),
-incorporates scrambled overheard dialogue into surreal comic scripts,
+incorporates scrambled overheard dialogue into comic scripts,
 and picks a page layout (comic_compositor.LAYOUTS) to suit each scene.
 """
 import json
@@ -137,8 +137,8 @@ class NarrativeEngine:
         system_prompt = (
             f"You write {arc['title']!r}, a {arc['genre']} comic series. Tone: {tone}. "
             f"Art style: {art_style}. Stay true to both in every issue. "
-            "You are given room notes: a vibe, an energy level, and a surreal line riffing on something "
-            "overheard in the room (some words swapped for absurd substitutes). Put those lines, swaps and all, "
+            "You are given room notes: a vibe, an energy level, and a line riffing on something "
+            "overheard in the room (some words swapped for random substitutes). Put those lines, swaps and all, "
             "into characters' mouths, captions, and situations, twisted to fit the story. "
             "You must output ONLY valid, parseable JSON conforming strictly to the requested schema."
         )
