@@ -190,15 +190,15 @@ mod tests {
         nav.mark_shown(issue(2));
         assert_eq!(targets(&nav, Direction::Forward), [3, 4, 5]);
         nav.mark_shown(issue(5));
-        assert!(targets(&nav, Direction::Forward).is_empty());
+        assert_eq!(targets(&nav, Direction::Forward), [0u32; 0]);
     }
 
     #[test]
     fn no_targets_without_a_shown_or_latest_issue() {
         let mut nav = Navigator::new(TIMEOUT);
-        assert!(targets(&nav, Direction::Back).is_empty());
+        assert_eq!(targets(&nav, Direction::Back), [0u32; 0]);
         nav.mark_shown(issue(3));
-        assert!(targets(&nav, Direction::Back).is_empty(), "latest unknown");
+        assert_eq!(targets(&nav, Direction::Back), [0u32; 0], "latest unknown");
     }
 
     #[test]

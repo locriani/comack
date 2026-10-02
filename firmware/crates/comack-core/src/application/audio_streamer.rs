@@ -258,7 +258,7 @@ mod tests {
         let mut streamer = AudioStreamer::new(microphone, uplink.clone(), &mut buf, config());
         streamer.tick();
         streamer.tick();
-        assert!(uplink.0.borrow().received.is_empty());
+        assert_eq!(uplink.0.borrow().received, []);
         assert!(
             streamer.is_connected(),
             "a mic hiccup does not drop the session"

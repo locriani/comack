@@ -411,7 +411,7 @@ mod tests {
         let mut buf = frame();
         let mut viewer = h.viewer(&mut buf);
         viewer.tick();
-        assert!(h.shown().is_empty());
+        assert_eq!(h.shown(), [0u8; 0]);
     }
 
     #[test]
@@ -421,7 +421,7 @@ mod tests {
         let mut viewer = h.viewer(&mut buf);
         h.server().offline = true;
         viewer.tick();
-        assert!(h.shown().is_empty());
+        assert_eq!(h.shown(), [0u8; 0]);
         h.server().offline = false;
         h.clock.advance(Duration::from_secs(10));
         viewer.tick();
@@ -435,7 +435,7 @@ mod tests {
         let mut buf = frame();
         let mut viewer = h.viewer(&mut buf);
         viewer.tick();
-        assert!(h.shown().is_empty());
+        assert_eq!(h.shown(), [0u8; 0]);
         h.server().broken.clear();
         h.clock.advance(Duration::from_secs(10));
         viewer.tick();
