@@ -79,7 +79,7 @@ Then:
 ```sh
 cd firmware/esp
 cp src/secrets.rs.example src/secrets.rs   # Wi-Fi networks + Tailscale auth key
-cargo run --release                        # builds ESP-IDF v5.3.2 on first run, flashes, opens the monitor
+cargo run --release                        # builds ESP-IDF v5.5.5 on first run, flashes, opens the monitor
 ```
 
 `esp-idf-sys` builds the vendored C components in `components/`. It also generates Rust bindings for `microlink.h` as `esp_idf_svc::sys::microlink`.
@@ -101,4 +101,5 @@ The port keeps the C++ firmware's timings: poll every 10 s, re-poll 2 s after a 
 - **The JSON parser accepts whitespace around `:`.**
 - **WebSocket frames use the 64-bit length form above 64 KiB.** C only had the 16-bit form. Audio chunks never reach that size.
 - **Wi-Fi also rotates when joining a network fails,** not only on disconnect.
+- **ESP-IDF is v5.5.5** (was 5.3.1), the version esp-idf-svc 0.53 is built and tested against.
 - **The app partition is 3 MB** (`partitions.csv`, flashed by espflash). The C build used the IDF's 1.5 MB single-app layout.
