@@ -1,0 +1,31 @@
+# Host-buildable crates: the hardware-agnostic core and the desktop simulator.
+# The ESP32-S3 binary lives in `esp/` as its own workspace because it needs the
+# Xtensa toolchain and ESP-IDF; see firmware/README.md.
+[workspace]
+resolver = "2"
+members = ["crates/comack-core", "crates/comack-sim"]
+exclude = ["esp"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+
+[workspace.dependencies]
+comack-core = { path = "crates/comack-core" }
+embedded-hal = "1.0"
+log = "0.4"
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+# Port errors are associated types documented on the trait.
+missing_errors_doc = "allow"
+# Prose names products (MicroLink, MagicDNS) that are not code.
+doc_markdown = "allow"

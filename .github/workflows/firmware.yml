@@ -1,0 +1,49 @@
+name: firmware
+
+on:
+  push:
+    paths: ["firmware/**", ".github/workflows/firmware.yml"]
+  pull_request:
+    paths: ["firmware/**", ".github/workflows/firmware.yml"]
+
+jobs:
+  host:
+    name: Core and simulator (host)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: firmware
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: Core builds without std
+        run: cargo build -p comack-core --target thumbv7em-none-eabihf
+
+  esp32s3:
+    name: ESP32-S3 firmware
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware/esp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: esp-rs/xtensa-toolchain@v1.6
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: firmware/esp
+      - name: Placeholder secrets
+        run: cp src/secrets.rs.example src/secrets.rs
+      - run: cargo build --release

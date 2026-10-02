@@ -1,0 +1,17 @@
+[package]
+name = "comack-core"
+version = "0.1.0"
+description = "Hardware-agnostic core of the Comack display firmware: domain, use cases, ports and protocol adapters."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+embedded-hal.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

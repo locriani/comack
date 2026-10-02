@@ -1,0 +1,40 @@
+[package]
+name = "comack-firmware"
+version = "0.1.0"
+description = "Comack firmware for the Seeed reTerminal E1001 (ESP32-S3): frameworks and composition root."
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+
+# Standalone workspace: this crate needs the Xtensa (`esp`) toolchain and
+# ESP-IDF, unlike the host-buildable crates in ../Cargo.toml.
+[workspace]
+
+[[bin]]
+name = "comack-firmware"
+harness = false # no host test harness on the device
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[dependencies]
+anyhow = "1"
+comack-core = { path = "../crates/comack-core" }
+embedded-hal = "1.0"
+esp-idf-svc = "0.53"
+log = "0.4"
+
+[build-dependencies]
+embuild = "0.33"
+
+# Build the vendored C components (MicroLink Tailscale client, its WireGuard
+# and cJSON dependencies) into ESP-IDF and generate Rust bindings for
+# MicroLink's public API as `esp_idf_svc::sys::microlink`.
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["../components"]
+bindings_header = "microlink_bindings.h"
+bindings_module = "microlink"
