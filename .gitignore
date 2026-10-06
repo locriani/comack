@@ -8,7 +8,10 @@ data/*.db
 data/audio/*
 .DS_Store
 .pio/
-firmware/include/secrets.h
-firmware/sdkconfig.reterminal_e1001
 .venv_pio/
+firmware/target/
+firmware/esp/target/
+firmware/esp/.embuild/
+firmware/esp/src/secrets.rs
+firmware/esp/sdkconfig
 data/comics/

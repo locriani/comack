@@ -1,0 +1,17 @@
+[package]
+name = "comack-sim"
+version = "0.1.0"
+description = "Runs the Comack firmware core on a desktop against a real or fake Comack server."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+comack-core.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
