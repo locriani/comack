@@ -1,5 +1,7 @@
 # Comack
 
+[![server](https://github.com/locriani/comack/actions/workflows/server.yml/badge.svg)](https://github.com/locriani/comack/actions/workflows/server.yml)
+
 Comack is a privacy-first appliance that turns room conversation into an
 ever-evolving surreal comic strip. A Seeed **reTerminal E1001** (ESP32-S3, 7.5″
 800×480 e-paper, PDM microphone) sits in your room, streams audio to a server

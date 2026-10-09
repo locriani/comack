@@ -50,6 +50,7 @@ comack-server-ai = [
 ]
 dev = [
     "pytest>=8.0.0",
+    "ruff>=0.16",
 ]
 
 [tool.setuptools.packages.find]
@@ -57,3 +58,13 @@ include = ["server*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Pragmatic floor: pycodestyle errors plus pyflakes. F401 (unused import) and
+# F841 (unused variable) are pre-existing in the tree and ignored until a
+# dedicated cleanup tightens them.
+select = ["E4", "E7", "E9", "F"]
+ignore = ["F401", "F841"]

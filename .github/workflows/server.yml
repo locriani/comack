@@ -1,0 +1,28 @@
+name: server
+
+on:
+  push:
+    paths: ["server/**", "tests/**", "pyproject.toml", "requirements.txt", ".github/workflows/server.yml"]
+  pull_request:
+    paths: ["server/**", "tests/**", "pyproject.toml", "requirements.txt", ".github/workflows/server.yml"]
+
+jobs:
+  test:
+    name: Lint and test (Python 3.11, light core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install light core + dev tools
+        # Deliberately NOT the comack-server-ai extra: torch/diffusers/
+        # faster-whisper never enter CI. Heavy deps are imported lazily
+        # by the server, so the suite runs on the light core.
+        run: pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check .
+      - name: Pytest
+        run: pytest -q
