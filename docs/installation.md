@@ -149,7 +149,8 @@ which backends are usable right now:
 
 `simulator/reterminal_sim.py` emulates the reTerminal: it streams synthetic
 16 kHz PCM audio to the server over `/ws/audio` (cycles of 5 s speech-shaped
-tone, 25 s room noise) and listens on `/ws/events` for comic-refresh events.
+tone, 25 s room noise), listens on `/ws/events` for comic-refresh events, and
+puts the device's three front buttons on the keyboard.
 
 ```sh
 # terminal 1 — the server (light core is fine)
@@ -168,11 +169,26 @@ the authentic e-paper refresh dance — before showing the new issue.
 
 ![Desktop simulator window: device bezel and blank e-paper panel before the first comic](images/simulator.png)
 
+The front buttons live on the keyboard (the real device has three physical
+buttons — see [the firmware README](../firmware/README.md)):
+
+- `←` / `→` (or `b` / `f`) page to the nearest older/newer revealed issue —
+  the same walk the device's Navigator does: deleted gaps are stepped past,
+  the walk never goes beyond the latest revealed issue, and each step fetches
+  the issue's `/api/comics/{n}.png`;
+- `g` (or space) is the green trigger: it reports the press to
+  `/api/device/buttons` (the dashboard's pressed-button chip), fires the same
+  `/api/trigger` call the device makes, and refetches the current comic right
+  away. While a new comic is still generating, the refresh event flashes it
+  in the moment the server reveals it.
+
+Every press — forward, back, and trigger — is reported to the server, the way
+the firmware reports its presses.
+
 Two notes from verification:
 
-- The status line under the bezel is clipped by the window's fixed
-  840x540 geometry — cosmetic, tracked on the
-  [roadmap](../ROADMAP.md). (On a real desktop you also get a title bar.)
+- The window is sized 840x620 to fit the device bezel, the status line, and
+  the key-bindings footer. (On a real desktop you also get a title bar.)
 - On a machine without a display, run `--headless` for the audio/event
   streaming only:
 

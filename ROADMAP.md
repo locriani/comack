@@ -70,7 +70,3 @@ Shipped across recent rounds (visible in the git log and the links from
   drive container settings without editing the compose file (documented in
   [docs/self-hosting.md](docs/self-hosting.md)); interpolation would close
   that gap. (Found during the docs pass.)
-- **Simulator window polish.** The simulator's fixed 840×540 geometry clips
-  the status line under the device bezel (visible in
-  [docs/images/simulator.png](docs/images/simulator.png)). Cosmetic; found
-  during the docs pass.
