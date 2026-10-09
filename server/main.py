@@ -14,6 +14,7 @@ from typing import Set, Dict, Any, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
 from server.auth import authorized
@@ -396,6 +397,26 @@ async def trigger_secret_phrase(payload: dict = None):
     })
     asyncio.create_task(_trigger_cycle_and_dispatch())
     return {"status": "ok", "message": f"Trigger '{phrase}' activated. Frame generation started."}
+
+
+class ButtonPress(BaseModel):
+    """Body of a device button-press report. The empty default (a missing field)
+    fails the whitelist below with the same 400 as an unknown button."""
+
+    button: str = ""
+
+
+@app.post("/api/device/buttons")
+async def device_buttons(body: ButtonPress):
+    """A device press reports itself here (fire-and-forget) so the dashboard can
+    show it. Tokenless like the other device-critical paths (server/auth.py):
+    the firmware has no token capability. Single device today, so the report
+    carries no device identity."""
+    if body.button not in {"forward", "back", "trigger"}:
+        raise HTTPException(status_code=400, detail="unknown button")
+    logger.info(f"Device button press: {body.button}")
+    broadcast_event({"event": "BUTTON_PRESSED", "button": body.button})
+    return {"ok": True}
 
 
 @app.get("/api/comics/current")

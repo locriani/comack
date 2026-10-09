@@ -4,7 +4,8 @@ Optional bearer-token auth for the browser-facing surfaces (WEB_TOKEN).
 The split, kept stable for the hardware and the browser:
 - Always open (device-critical): the audio stream (/ws/audio), every comic
   read the device or a browser <img> tag makes — current-comic status/image/bin
-  and per-issue png/bin/originals — the HTML shells / and /reader, and
+  and per-issue png/bin/originals — the device's press reports
+  (/api/device/buttons), the HTML shells / and /reader, and
   /static/**. The e-paper appliance must keep working with WEB_TOKEN set and
   no header capability: the firmware streams to /ws/audio and polls the
   current-comic endpoints with nothing but the path. And a browser cannot
@@ -31,6 +32,7 @@ DEVICE_PATH_PATTERNS = (
     re.compile(r"^/api/comics/\d+/png$"),
     re.compile(r"^/api/comics/\d+/bin$"),
     re.compile(r"^/api/comics/\d+/(color|panel\d+)\.png$"),
+    re.compile(r"^/api/device/buttons$"),
 )
 # Code-only surfaces behind the token-gated APIs, plus the device's audio stream.
 OPEN_PREFIXES = ("/static/", "/ws/audio")

@@ -4,7 +4,8 @@ The split contract (server/auth.py):
 - open without a token: the HTML shells / and /reader (a browser cannot attach
   Authorization headers to top-level navigation — the shells load so the
   in-page token challenge can run), /ws/audio, current-comic and per-issue
-  png/bin/original reads, /static/**
+  png/bin/original reads, the device press reports (/api/device/buttons),
+  /static/**
 - everything else requires "Authorization: Bearer <token>" once WEB_TOKEN is set
   (/ws/events accepts ?token= because browsers cannot set WebSocket headers)
 """
@@ -63,6 +64,7 @@ class TestPathClassification:
     def test_similar_but_unlisted_paths_are_not_open(self):
         # default-deny: a new sibling route is protected unless listed
         assert not is_open_path("/api/comics/12/script")
+        assert not is_open_path("/api/device/buttons/extra")
         assert not is_open_path("/staticfoo")
 
 
@@ -121,6 +123,19 @@ class TestHttpMiddleware:
         assert client.get("/api/comics/current").status_code == 404
         assert client.get("/api/comics/9999/png").status_code == 404
         assert client.get("/api/comics/9999/bin").status_code == 404
+
+    def test_device_press_report_stays_tokenless(self, client):
+        settings.WEB_TOKEN = TOKEN
+        # The firmware has no token capability: the route must run (200), not 401.
+        resp = client.post("/api/device/buttons", json={"button": "trigger"})
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+
+    def test_device_press_report_rejects_bad_body_even_tokenless(self, client):
+        settings.WEB_TOKEN = TOKEN
+        # Open path ≠ unvalidated: an unknown button still gets the route's 400.
+        resp = client.post("/api/device/buttons", json={"button": "left"})
+        assert resp.status_code == 400
 
     def test_static_assets_stay_tokenless(self, client):
         settings.WEB_TOKEN = TOKEN

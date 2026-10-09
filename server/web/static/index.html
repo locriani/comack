@@ -142,11 +142,14 @@
 
         <!-- Audio & VAD Card -->
         <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-4">
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between gap-2">
             <span class="text-sm font-bold">Microphone Audio Stream</span>
-            <div id="vadIndicator" class="flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
-              <span class="w-2 h-2 rounded-full bg-gray-500"></span>
-              <span>SILENCE</span>
+            <div class="flex items-center space-x-2">
+              <div id="buttonPressChip" class="hidden"></div>
+              <div id="vadIndicator" class="flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
+                <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+                <span>SILENCE</span>
+              </div>
             </div>
           </div>
 

@@ -21,6 +21,32 @@ export function setConnectionBadge(state) {
   }
 }
 
+// Button-press pulse: a device press surfaces as a transient chip beside the
+// VAD indicator — visible ~3 s, then fades; a fresh press relabels and
+// restarts the dwell. A pulse like VOICE DETECTED, not a log.
+const PRESS_LABELS = { forward: 'FORWARD', back: 'BACK', trigger: 'GREEN' };
+const PRESS_CHIP_DWELL_MS = 3000;
+const PRESS_CHIP_FADE_MS = 500;
+const pressChipBase = 'items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 transition-opacity duration-500';
+let pressChipTimer = null;
+
+function showButtonPress(button) {
+  const chip = $('buttonPressChip');
+  const label = PRESS_LABELS[button];
+  if (!label) return;
+
+  chip.className = `flex ${pressChipBase}`;
+  chip.replaceChildren(
+    el('span', { class: 'w-2 h-2 rounded-full bg-indigo-400' }),
+    el('span', {}, `${label} PRESSED`)
+  );
+  clearTimeout(pressChipTimer);
+  pressChipTimer = setTimeout(() => {
+    chip.className = `flex ${pressChipBase} opacity-0`;
+    pressChipTimer = setTimeout(() => { chip.className = 'hidden'; }, PRESS_CHIP_FADE_MS);
+  }, PRESS_CHIP_DWELL_MS);
+}
+
 function updateSneakyStatus(status) {
   if (!status) return;
 
@@ -169,6 +195,7 @@ export function initDashboard() {
   onEvent('SNEAKY_COMIC_REFRESH', refreshComicImage);
   onEvent('NEW_COMIC_QUEUED', (data) => updateSneakyStatus(data.status));
   onEvent('NEW_TRANSCRIPT', (data) => addTranscriptItem(data.transcript));
+  onEvent('BUTTON_PRESSED', (data) => showButtonPress(data.button));
 
   // Polling heartbeat for the silence timer and arc progress (covers ws gaps)
   setInterval(async () => {
