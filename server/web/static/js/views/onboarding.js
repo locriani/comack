@@ -17,12 +17,49 @@ const PRESETS = [
 ];
 const IMAGE_KEYS = ['FLUX_MODEL_ID', 'FLUX_DEVICE', 'FLUX_INFERENCE_STEPS', 'FLUX_MIN_FREE_VRAM_GB', 'FLUX_API_URL'];
 
+// ── finish-merge (pure, exported for tests) ────────────────────────────
+// Preset values spread first so typed fields win: the external-api preset
+// ships sample values like http://your-llm-host:8080/ that must never
+// overwrite what the user typed in earlier steps. Non-empty typed image
+// values still beat the preset. A masked value (api.js MASKED) is the
+// server's placeholder, never new content — echoing one back would
+// overwrite the stored secret with asterisks, so it is dropped.
+export function nonEmptyImageOverrides(state) {
+  const out = {};
+  for (const k of IMAGE_KEYS) {
+    const v = String(state[k] ?? '').trim();
+    if (v !== '') out[k] = v;
+  }
+  return out;
+}
+
+export function buildFinishUpdates(state) {
+  const updates = {
+    ...(state.preset ? { ...state.presetValues, ...nonEmptyImageOverrides(state) } : {}),
+    LLM_URL: state.LLM_URL.trim(),
+    LLM_MODEL: state.LLM_MODEL.trim(),
+    WHISPER_MODEL_SIZE: state.WHISPER_MODEL_SIZE,
+    ...(state.preset === 'external-api'
+      ? { FLUX_API_KEY: state.FLUX_API_KEY.trim(), FLUX_API_MODEL: state.FLUX_API_MODEL.trim() }
+      : {}),
+    ONBOARDED: true,
+  };
+  for (const key of ['LLM_URL', 'LLM_MODEL', 'FLUX_API_KEY']) {
+    if (isMasked(updates[key])) delete updates[key];
+  }
+  return updates;
+}
+
 export function initOnboarding(config, { onComplete }) {
   const root = document.getElementById('onboarding-root');
   const state = {
     LLM_URL: config.values.LLM_URL ?? '',
     LLM_MODEL: config.values.LLM_MODEL ?? '',
     WHISPER_MODEL_SIZE: config.values.WHISPER_MODEL_SIZE ?? 'base.en',
+    // FLUX_API_KEY arrives masked (config_api.py MASKED) when already set;
+    // buildFinishUpdates drops the echo so the stored key is never clobbered.
+    FLUX_API_KEY: config.values.FLUX_API_KEY ?? '',
+    FLUX_API_MODEL: config.values.FLUX_API_MODEL ?? '',
     preset: null,
     presetValues: {},      // values the chosen preset would set
     consent: false,
@@ -201,8 +238,13 @@ export function initOnboarding(config, { onComplete }) {
 
     if (state.preset === 'external-api') {
       children.push(
-        label('FLUX_API_URL', 'endpoint that accepts POST /generate and returns image bytes'),
-        boundInput('FLUX_API_URL', { placeholder: 'http://gpu-box:8790/generate' }));
+        label('FLUX_API_URL', 'OpenAI-compatible image API — panels POST {base}/v1/images/generations and read base64 (or a URL) back'),
+        boundInput('FLUX_API_URL', { placeholder: 'http://gpu-box:8000' }),
+        el('div', { class: 'grid grid-cols-2 gap-3' },
+          el('div', {}, label('FLUX_API_MODEL', 'model name the endpoint expects (empty = provider default)'),
+            boundInput('FLUX_API_MODEL', { placeholder: 'flux-schnell' })),
+          el('div', {}, label('FLUX_API_KEY', 'sent as a Bearer token on renders and the probe; stored masked'),
+            boundInput('FLUX_API_KEY', { type: 'password', placeholder: 'optional' }))));
     }
     if (state.preset && state.preset !== 'external-api') {
       children.push(
@@ -254,13 +296,9 @@ export function initOnboarding(config, { onComplete }) {
     });
   }
 
-  function nonEmptyImageOverrides() {
-    const out = {};
-    for (const k of IMAGE_KEYS) {
-      const v = String(state[k]).trim();
-      if (v !== '') out[k] = v;
-    }
-    return out;
+  function nonEmptyOverridesRow() {
+    return Object.entries({ ...state.presetValues, ...nonEmptyImageOverrides(state) })
+      .map(([k, v]) => `${k}=${v}`).join(', ');
   }
 
   function summary() {
@@ -268,8 +306,7 @@ export function initOnboarding(config, { onComplete }) {
       el('span', { class: 'text-xs mono text-indigo-300' }, k),
       el('span', { class: 'text-xs mono text-gray-300 truncate max-w-[60%] text-right' }, String(v ?? '')));
     const presetRow = state.preset
-      ? [row(`preset: ${state.preset}`, Object.entries({ ...state.presetValues, ...nonEmptyImageOverrides() })
-        .map(([k, v]) => `${k}=${v}`).join(', '))]
+      ? [row(`preset: ${state.preset}`, nonEmptyOverridesRow())]
       : [];
     return [
       row('LLM_URL', state.LLM_URL.trim() || '(empty — mining off)'),
@@ -299,18 +336,7 @@ export function initOnboarding(config, { onComplete }) {
   }
 
   async function finish() {
-    const updates = {
-      LLM_URL: state.LLM_URL.trim(),
-      LLM_MODEL: state.LLM_MODEL.trim(),
-      WHISPER_MODEL_SIZE: state.WHISPER_MODEL_SIZE,
-      ...(state.preset ? { ...state.presetValues, ...nonEmptyImageOverrides() } : {}),
-      ONBOARDED: true,
-    };
-    // A prefilled masked value (e.g. stored LLM credentials) is a placeholder,
-    // not the real thing — echoing it back would overwrite the setting.
-    for (const key of ['LLM_URL', 'LLM_MODEL']) {
-      if (isMasked(updates[key])) delete updates[key];
-    }
+    const updates = buildFinishUpdates(state);
     nextBtn.disabled = true;
     nextBtn.textContent = 'Saving\u2026';
     try {
