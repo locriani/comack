@@ -50,7 +50,7 @@ The honest chain to check, in order:
 3. **Image rendering.** Without a render backend the pipeline dies later,
    after mining. `POST /api/config/test/image` (or Settings → Test
    connection) distinguishes:
-   - `torch/diffusers not installed — install the comack-server-ai extra, or
+   - `torch/diffusers not installed — install the local-inference extra, or
      set FLUX_API_URL to render on an external image API.` — light install;
      either install the heavy stack or point `FLUX_API_URL` elsewhere.
    - `torch/diffusers installed, but the cuda device is not available.` —
@@ -115,9 +115,9 @@ light install):
 | `Could not reach the endpoint.` (+ `ConnectError` in details) | The URL didn't answer in 5 s | Host/port/path, endpoint up? |
 | `Endpoint answered, but /v1/models returned HTTP <n>.` | Reachable, but not an OpenAI-shaped API (or auth needed) | Check the URL includes `/v1`, API keys, server type |
 | `Reachable; model '<name>' is available.` / `Model not in the endpoint's list…` (note, not failure) | Model-name check against the endpoint's model list | llama.cpp-style servers ignore the name; verify it yourself |
-| `torch/diffusers not installed — install the comack-server-ai extra, or set FLUX_API_URL…` | Light install, local render | Install `[comack-server-ai]` or set `FLUX_API_URL` |
+| `torch/diffusers not installed — install the local-inference extra, or set FLUX_API_URL…` | Light install, local render | Install `[local-inference]` or set `FLUX_API_URL` |
 | `torch/diffusers installed, but the <device> device is not available.` | Heavy stack present, device missing | Driver; or `FLUX_DEVICE=cpu` |
-| `faster-whisper not installed — transcription falls back to the offline mock. Install the comack-server-ai extra for real transcription.` | Light install | Audio still streams; transcription is a mock until the extra is installed |
+| `faster-whisper not installed — transcription falls back to the offline mock. Install the local-inference extra for real transcription.` | Light install | Audio still streams; transcription is a mock until the extra is installed |
 | `faster-whisper installed; '<size>' is cached locally…` / `…will download from Hugging Face on first use.` | Install state and cache check | — |
 
 ## Device not appearing

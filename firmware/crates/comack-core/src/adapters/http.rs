@@ -274,7 +274,7 @@ mod tests {
     const SERVER: Ipv4Addr = Ipv4Addr::new(100, 64, 0, 1);
 
     fn client(connector: ScriptedConnector) -> HttpClient<'static, ScriptedConnector> {
-        HttpClient::new(connector, "comack-server", 8000, HttpConfig::default())
+        HttpClient::new(connector, "localhost", 8000, HttpConfig::default())
     }
 
     #[test]
@@ -284,14 +284,14 @@ mod tests {
             &mut buf,
             Method::Post,
             "/api/trigger",
-            "comack-server",
+            "localhost",
             8000,
             b"",
         )
         .unwrap();
         assert_eq!(
             &buf[..n],
-            b"POST /api/trigger HTTP/1.1\r\nHost: comack-server:8000\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            b"POST /api/trigger HTTP/1.1\r\nHost: localhost:8000\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         );
     }
 

@@ -139,7 +139,7 @@ mod tests {
 
     fn service(connector: ScriptedConnector) -> HttpComicService<'static, ScriptedConnector> {
         HttpComicService::new(
-            HttpClient::new(connector, "comack-server", 8000, HttpConfig::default()),
+            HttpClient::new(connector, "localhost", 8000, HttpConfig::default()),
             SERVER,
         )
     }

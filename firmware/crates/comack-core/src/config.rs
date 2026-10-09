@@ -11,9 +11,11 @@ pub struct ServerEndpoint<'a> {
     pub port: u16,
 }
 
-/// The comack-server running the Comack Python server.
+/// Default server: `localhost` suits the desktop simulator and tests. The
+/// value is compiled into ESP builds, so set your server's hostname here
+/// (or store a runtime config on the device) before flashing a real one.
 pub const SERVER: ServerEndpoint<'static> = ServerEndpoint {
-    host: "comack-server",
+    host: "localhost",
     port: 8000,
 };
 

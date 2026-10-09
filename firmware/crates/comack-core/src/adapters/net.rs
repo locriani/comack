@@ -84,20 +84,20 @@ mod tests {
 
     #[test]
     fn resolves_by_name() {
-        let locator = ServerLocator::new(OnlyKnows("comack-server", PEER), "comack-server");
+        let locator = ServerLocator::new(OnlyKnows("localhost", PEER), "localhost");
         assert_eq!(locator.locate(), Some(PEER));
-        assert_eq!(locator.host(), "comack-server");
+        assert_eq!(locator.host(), "localhost");
     }
 
     #[test]
     fn falls_back_to_literal_address() {
-        let locator = ServerLocator::new(OnlyKnows("comack-server", PEER), "100.101.102.103");
+        let locator = ServerLocator::new(OnlyKnows("localhost", PEER), "100.101.102.103");
         assert_eq!(locator.locate(), Some(Ipv4Addr::new(100, 101, 102, 103)));
     }
 
     #[test]
     fn unknown_name_is_unresolved() {
-        let locator = ServerLocator::new(OnlyKnows("comack-server", PEER), "laptop");
+        let locator = ServerLocator::new(OnlyKnows("localhost", PEER), "laptop");
         assert_eq!(locator.locate(), None);
     }
 }

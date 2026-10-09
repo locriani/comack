@@ -25,7 +25,7 @@ ELF="$ESP_DIR/target/xtensa-esp32s3-espidf/release/comack-firmware"
 
 # Compile-time constants the fallback cannot carry (firmware/crates/
 # comack-core/src/config.rs). Used for the default answers and the notice.
-DEFAULT_SERVER="comack-server:8000"
+DEFAULT_SERVER="localhost:8000"
 DEFAULT_NAME="comack-display"
 
 CTRL_RE='[[:cntrl:]]'
@@ -47,7 +47,7 @@ Usage: scripts/provision-device.sh [options]
   --ssid SSID           Wi-Fi network to compile into the fallback (max 32 chars)
   --password PW         Wi-Fi password (max 64 chars; hidden prompt if omitted)
   --server HOST[:PORT]  server address (hostname or IPv4; recorded and checked
-                        against the compile-time default comack-server:8000)
+                        against the compile-time default localhost:8000)
   --name NAME           device name (recorded and checked against the
                         compile-time default comack-display)
   --tskey KEY           Tailscale auth key (optional; the placeholder from

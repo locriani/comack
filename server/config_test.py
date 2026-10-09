@@ -172,7 +172,7 @@ async def test_image(overrides: Dict[str, Any] = Body(default={})):
     except ImportError:
         detail = {
             "mode": "local", "installed": False,
-            "message": "torch/diffusers not installed — install the comack-server-ai extra, or set FLUX_API_URL to render on an external image API.",
+            "message": "torch/diffusers not installed — install the local-inference extra, or set FLUX_API_URL to render on an external image API.",
         }
     except Exception as error:  # a broken CUDA install etc. is a finding, not a 500
         logger.warning("Local image probe failed: %s", error)
@@ -204,7 +204,7 @@ async def test_whisper(overrides: Dict[str, Any] = Body(default={})):
         result["detail"]["installed"] = False
         result["message"] = (
             "faster-whisper not installed — transcription falls back to the offline mock. "
-            "Install the comack-server-ai extra for real transcription.")
+            "Install the local-inference extra for real transcription.")
         return result
     except Exception as error:
         result["detail"]["installed"] = False

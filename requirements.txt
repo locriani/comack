@@ -10,7 +10,7 @@ python-multipart>=0.0.9
 aiofiles>=23.2.0
 nltk>=3.9  # POS tagger for the privacy scrambler
 
-# FLUX.1 & Speech AI Dependencies (for comack-server)
+# FLUX.1 & Speech AI Dependencies (for local inference)
 torch>=2.2.0
 diffusers>=0.32.0  # GGUF-quantized FLUX transformer
 gguf>=0.10.0

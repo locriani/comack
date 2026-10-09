@@ -16,7 +16,7 @@ pip install -e '.[dev]'     # adds pytest
 The heavy AI dependencies (torch, diffusers, faster-whisper, …) are **optional**:
 
 ```sh
-pip install -e '.[comack-server-ai]'   # local Whisper + FLUX rendering
+pip install -e '.[local-inference]'   # local Whisper + FLUX rendering
 ```
 
 The server imports them lazily inside the transcriber and image generator, so
@@ -25,8 +25,8 @@ suite without them. (You only need the extra to run transcription/rendering
 locally; without it, point `FLUX_API_URL` at an external renderer or run tests
 that don't exercise those paths.)
 
-`requirements.txt` stays as the full pinned set used by the `comack-server`
-Docker/systemd deployment.
+`requirements.txt` stays as the full pinned set used by the Docker
+deployment.
 
 Run the tests from the repo root:
 

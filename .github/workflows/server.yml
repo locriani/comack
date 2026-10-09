@@ -18,7 +18,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install light core + dev tools
-        # Deliberately NOT the comack-server-ai extra: torch/diffusers/
+        # Deliberately NOT the local-inference extra: torch/diffusers/
         # faster-whisper never enter CI. Heavy deps are imported lazily
         # by the server, so the suite runs on the light core.
         run: pip install -e ".[dev]"

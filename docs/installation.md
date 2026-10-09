@@ -31,7 +31,7 @@ pip install -e .            # light core: server, web UI, tests — no torch/dif
 
 Or let the repo's script do all of it — including the `.env` seeding and the
 systemd unit rendering covered over on
-[self-hosting](self-hosting.md#systemd-venv-the-comack-server-profile):
+[self-hosting](self-hosting.md#systemd-venv--the-local-gpu-profile):
 `./scripts/setup.sh` is idempotent (every step skips itself when already
 done); `--ai` adds [the heavy stack](#4-add-the-heavy-ai-stack-optional).
 
@@ -135,11 +135,11 @@ After onboarding you land on the dashboard:
 
 ## 4. Add the heavy AI stack (optional)
 
-The `comack-server-ai` extra installs local transcription (faster-whisper) and
+The `local-inference` extra installs local transcription (faster-whisper) and
 local rendering (torch + diffusers, GGUF FLUX):
 
 ```sh
-pip install -e '.[comack-server-ai]'
+pip install -e '.[local-inference]'
 ```
 
 This is several gigabytes of wheels and, on first use, model downloads
@@ -239,7 +239,7 @@ sandbox, no GPU, no display):
 - `docker compose config` — see [self-hosting](self-hosting.md) for what that
   did and did not cover; the container build itself was **not** executed here.
 
-Not executed for this page: the heavy `comack-server-ai` install (wheels +
+Not executed for this page: the heavy `local-inference` install (wheels +
 GPU), real transcription/rendering, and device flashing. Those sections
 describe the documented behavior of their components, not a fresh run — the
 [honest no-hardware experience](#2-first-run) is what was verified.

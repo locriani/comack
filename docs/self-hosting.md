@@ -9,7 +9,7 @@ Three deployment shapes; pick by where rendering happens:
 | Shape | Fits | Notes |
 |---|---|---|
 | [Docker Compose](#docker-compose) | "Just run it" on a Linux box | Image includes the full AI stack; settings live in `.env` and survive recreation |
-| [systemd + venv](#systemd-venv-the-comack-server-profile) | The comack-server profile: local GPU, models cached, boots with the system | What `deploy_comack-server.sh` sets up |
+| [systemd + venv](#systemd-venv--the-local-gpu-profile) | The local-GPU profile: local GPU, models cached, boots with the system | What `deploy_server.sh` sets up |
 | Light server + external APIs | A small box (or laptop) with no GPU; rendering and mining happen elsewhere | `presets/external-api.env`, uvicorn in a venv or tmux |
 
 Verification status for this page, stated up front: `docker compose config`
@@ -22,7 +22,7 @@ placeholders), `bash -n` and shellcheck 0.10.0 clean. The `--with-tailscale`
 path was **partially exercised**: its already-installed / already-connected
 skips and its installer-failure fallback ran in that sandbox; a real install
 and `tailscale up` did not (no tailnet there). `comack.service` and
-`deploy_comack-server.sh` were **inspected**, not run against a real host. The
+`deploy_server.sh` were **inspected**, not run against a real host. The
 `WEB_TOKEN` behavior was **executed and verified** against a running server.
 
 ## Docker compose
@@ -72,7 +72,7 @@ The compose file validated cleanly with:
 docker compose config -q   # exit 0 — syntax + schema OK (verified)
 ```
 
-## systemd (venv) — the comack-server profile
+## systemd (venv) — the local-GPU profile
 
 For a GPU machine with models already cached, run the server as a system
 service. [`scripts/setup.sh`](../scripts/setup.sh) does the whole path: it
@@ -88,7 +88,7 @@ sudo systemctl enable --now comack
 journalctl -u comack -f       # watch the startup log
 ```
 
-The rendered unit pins the comack-server-profile defaults
+The rendered unit pins the local-GPU-profile defaults
 (`FLUX_MODEL_ID=black-forest-labs/FLUX.1-schnell` — the GGUF model with
 ~10 GB VRAM headroom; use `stabilityai/sd-turbo` on smaller GPUs — plus
 `HF_HUB_OFFLINE=1` because models are expected to be cached already, and
@@ -105,11 +105,11 @@ re-run `scripts/setup.sh`, re-install the rendered file), then
 
 ## Deploying to a remote host
 
-[`deploy_comack-server.sh`](../deploy_comack-server.sh) rsyncs the repo to a host
+[`deploy_server.sh`](../deploy_server.sh) rsyncs the repo to a host
 you control — a LAN name, IP, or Tailscale hostname:
 
 ```sh
-./deploy_comack-server.sh comack@myhost.tail1234.ts.net /home/comack/comack
+./deploy_server.sh comack@myhost.tail1234.ts.net /home/comack/comack
 ```
 
 It excludes `.env` (the target's own settings are authoritative there),
@@ -121,8 +121,10 @@ does not install anything on the target by itself.
 
 The device is a native tailnet node (via its vendored MicroLink client) and
 resolves the server by its Tailscale **MagicDNS** name — the compile-time
-default is the literal hostname `comack-server`. The rest of this page used to
-assume Tailscale was already set up; this section closes that gap.
+default is `localhost`, which only suits the desktop simulator; set your
+server's hostname in `firmware/crates/comack-core/src/config.rs` before
+flashing an ESP target. The rest of this page used to assume Tailscale was
+already set up; this section closes that gap.
 
 The one-script path — installs tailscaled with the official installer, then
 joins (key from the `TS_AUTH_KEY` environment variable, a prompt, or the
@@ -137,18 +139,20 @@ The same two steps by hand:
 ```sh
 curl -fsSL https://tailscale.com/install.sh | sh   # official installer
 sudo tailscale up                                  # prints a login URL, or:
-sudo tailscale up --auth-key=tskey-auth-… --hostname=comack-server
+sudo tailscale up --auth-key=tskey-auth-… --hostname=my-server
 ```
 
 - **Auth keys** are pre-generated at
   [login.tailscale.com](https://login.tailscale.com) (`tskey-auth-…`);
   `--auth-key=` lets a headless box join without a browser.
-- **Name this node `comack-server`** (`--hostname=comack-server`) — the firmware
-  looks that exact name up via MagicDNS today; pointing the device at a
-  different name requires a firmware change (runtime server addressing is
-  planned device-side work). A server that should stay connected
-  indefinitely is also a candidate for disabling key expiry in the admin
-  console — a security tradeoff, so only for machines you trust.
+- **Name the server's node whatever you like** (`--hostname=my-server`) —
+  then set that name as `SERVER.host` in
+  `firmware/crates/comack-core/src/config.rs` and flash the device with it:
+  the value is compiled in (the default, `localhost`, only suits the desktop
+  simulator; a runtime-stored config overrides it once the on-device portal
+  ships). A server that should stay connected indefinitely is also a
+  candidate for disabling key expiry in the admin console — a security
+  tradeoff, so only for machines you trust.
 - **WEB_TOKEN and the tailnet:** with `WEB_TOKEN` empty, browser-facing
   APIs are open — defensible because the tailnet is a private, single-user
   network, and the device's paths must stay tokenless regardless (see the

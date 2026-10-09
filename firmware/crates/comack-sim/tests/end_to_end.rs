@@ -31,7 +31,7 @@ fn service(server: &FakeServer) -> HttpComicService<'static, StdConnector> {
         recv_timeout: Duration::from_secs(2),
     };
     HttpComicService::new(
-        HttpClient::new(StdConnector, "comack-server", server.port, config),
+        HttpClient::new(StdConnector, "localhost", server.port, config),
         server.ip(),
     )
 }
@@ -213,14 +213,14 @@ struct Localhost;
 
 impl HostResolver for Localhost {
     fn resolve(&self, host: &str) -> Option<Ipv4Addr> {
-        (host == "comack-server").then_some(Ipv4Addr::LOCALHOST)
+        (host == "localhost").then_some(Ipv4Addr::LOCALHOST)
     }
 }
 
 fn uplink(port: u16) -> WebSocketUplink<'static, StdConnector, Localhost> {
     WebSocketUplink::new(
         StdConnector,
-        ServerLocator::new(Localhost, "comack-server"),
+        ServerLocator::new(Localhost, "localhost"),
         port,
         "/ws/audio",
         WsConfig::default(),

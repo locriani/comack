@@ -1,7 +1,7 @@
 //! Run the Comack display firmware on the desktop.
 //!
 //! ```text
-//! cargo run -p comack-sim -- [--host comack-server] [--port 8000] [--out screen.pbm] [--no-audio]
+//! cargo run -p comack-sim -- [--host localhost] [--port 8000] [--out screen.pbm] [--no-audio]
 //! ```
 //!
 //! Streams synthetic audio to the server, polls for comics and writes the

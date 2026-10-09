@@ -35,10 +35,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local Whisper + FLUX/diffusers inference (the "comack-server" deployment profile).
+# Local Whisper + FLUX/diffusers inference on the server host itself.
 # Without this extra, point FLUX_API_URL / LLM_URL at external endpoints —
 # or run the light core for tests and the web UI only.
-comack-server-ai = [
+local-inference = [
     "torch>=2.2.0",
     # diffusers: GGUF-quantized FLUX transformer support
     "diffusers>=0.32.0",

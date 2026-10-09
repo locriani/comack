@@ -4,7 +4,7 @@
 # Each step skips itself when already done, so re-running is always safe:
 #   1. checks for Python 3.11+
 #   2. creates .venv
-#   3. installs the light core (--ai adds the comack-server-ai extra)
+#   3. installs the light core (--ai adds the local-inference extra)
 #   4. seeds .env from .env.example — never overwrites an existing .env
 #   5. renders comack.service with the real user and paths into
 #      comack.service.rendered (installing it when systemd is present)
@@ -31,7 +31,7 @@ Usage: scripts/setup.sh [--ai] [--with-tailscale]
 
 Idempotent server setup for Comack (venv + optional systemd unit).
 
-  --ai               also install the comack-server-ai extra (local Whisper and
+  --ai               also install the local-inference extra (local Whisper and
                      FLUX rendering; several GB of wheels)
   --with-tailscale   install tailscaled (official installer) and join the
                      tailnet. Auth key: TS_AUTH_KEY env var, a prompt, or
@@ -113,13 +113,13 @@ else
     "$VENV_PY" -m pip install -e .
 fi
 if [ "$SETUP_AI" -eq 1 ]; then
-    # faster-whisper is distinctive to the comack-server-ai extra; pip show is
+    # faster-whisper is distinctive to the local-inference extra; pip show is
     # an offline proxy for "the heavy group is in".
     if "$VENV_PY" -m pip show faster-whisper >/dev/null 2>&1; then
-        echo "== comack-server-ai extra already installed — skipping"
+        echo "== local-inference extra already installed — skipping"
     else
-        echo "== Installing the comack-server-ai extra (torch, diffusers, faster-whisper)"
-        "$VENV_PY" -m pip install -e '.[comack-server-ai]'
+        echo "== Installing the local-inference extra (torch, diffusers, faster-whisper)"
+        "$VENV_PY" -m pip install -e '.[local-inference]'
     fi
 fi
 
@@ -136,7 +136,7 @@ fi
 # replaced with a note rather than a value: real environment variables in the
 # unit outrank .env, so pinning it would silently defeat wizard/dashboard
 # edits. The FLUX_MODEL_ID / SNEAKY_SILENCE_SECONDS / HF_HUB_OFFLINE pins
-# stay — they are the comack-server profile defaults.
+# stay — they are the local-GPU profile defaults.
 RUN_USER="$(id -un)"
 RENDERED="comack.service.rendered"
 sed -E \
@@ -146,7 +146,7 @@ sed -E \
     -e "s|^ExecStart=.*|ExecStart=${ROOT}/.venv/bin/uvicorn server.main:app --host 0.0.0.0 --port 8000|" \
     -e "s|^# LLM_URL:.*|# LLM_URL is read from the repo-root .env (like every other setting), so|" \
     -e "s|^#   http://<your-llm-server>:80/.*|# edits made in the dashboard's settings page take effect. The pins below|" \
-    -e "s|^Environment=LLM_URL=.*|# are the comack-server profile defaults; remove them to let .env win.|" \
+    -e "s|^Environment=LLM_URL=.*|# are the local-GPU profile defaults; remove them to let .env win.|" \
     comack.service > "$RENDERED"
 
 if grep -Eq 'your-user|your-llm-server' "$RENDERED"; then

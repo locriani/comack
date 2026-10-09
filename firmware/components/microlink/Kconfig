@@ -36,7 +36,7 @@ menu "MicroLink V2 Configuration"
         string "Priority peer VPN IP"
         default ""
         help
-            Tailscale VPN IP of the priority peer (e.g., "100.81.222.123").
+            Tailscale VPN IP of the priority peer (e.g., "100.64.0.1").
             This peer is guaranteed a WireGuard slot even when the peer table
             is full — the least-recently-used non-priority peer is evicted to
             make room.

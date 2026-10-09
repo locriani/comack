@@ -58,7 +58,7 @@ mod tests {
         DeviceConfig::from_compile_time(
             &networks,
             ServerEndpoint {
-                host: "comack-server",
+                host: "localhost",
                 port: 8000,
             },
             "comack-display",

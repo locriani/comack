@@ -358,7 +358,7 @@ mod tests {
     ) {
         let c = ScriptedConnector::replying(&[ACCEPT]);
         let ws =
-            WebSocket::connect(&c, ADDR, "comack-server", "/ws/audio", WsConfig::default()).unwrap();
+            WebSocket::connect(&c, ADDR, "localhost", "/ws/audio", WsConfig::default()).unwrap();
         c.0.borrow_mut().sent.clear();
         (c, ws)
     }
@@ -377,9 +377,9 @@ mod tests {
     #[test]
     fn handshake_request_is_well_formed() {
         let mut buf = [0u8; 256];
-        let n = write_handshake(&mut buf, "comack-server", 8000, "/ws/audio").unwrap();
+        let n = write_handshake(&mut buf, "localhost", 8000, "/ws/audio").unwrap();
         let text = core::str::from_utf8(&buf[..n]).unwrap();
-        assert!(text.starts_with("GET /ws/audio HTTP/1.1\r\nHost: comack-server:8000\r\n"));
+        assert!(text.starts_with("GET /ws/audio HTTP/1.1\r\nHost: localhost:8000\r\n"));
         assert!(text.contains("Upgrade: websocket\r\n"));
         assert!(text.contains("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"));
         assert!(text.ends_with("Sec-WebSocket-Version: 13\r\n\r\n"));
@@ -428,7 +428,7 @@ mod tests {
     fn connect_performs_the_upgrade() {
         let c = ScriptedConnector::replying(&[ACCEPT]);
         assert!(
-            WebSocket::connect(&c, ADDR, "comack-server", "/ws/audio", WsConfig::default()).is_ok()
+            WebSocket::connect(&c, ADDR, "localhost", "/ws/audio", WsConfig::default()).is_ok()
         );
         let wire = c.0.borrow();
         assert_eq!(wire.connects, [(ADDR, Duration::from_secs(5))]);
@@ -519,20 +519,20 @@ mod tests {
     #[test]
     fn uplink_locates_server_then_connects() {
         let c = ScriptedConnector::replying(&[ACCEPT]);
-        let locator = ServerLocator::new(Fixed(Some(*ADDR.ip())), "comack-server");
+        let locator = ServerLocator::new(Fixed(Some(*ADDR.ip())), "localhost");
         let mut uplink =
             WebSocketUplink::new(c.clone(), locator, 8000, "/ws/audio", WsConfig::default());
         assert!(uplink.open().is_ok());
         assert_eq!(c.0.borrow().connects[0].0, ADDR);
         assert!(c
             .sent()
-            .windows(23)
-            .any(|w| w == b"Host: comack-server:8000\r\n"));
+            .windows(22)
+            .any(|w| w == b"Host: localhost:8000\r\n"));
     }
 
     #[test]
     fn uplink_reports_unresolved_server() {
-        let locator = ServerLocator::new(Fixed(None), "comack-server");
+        let locator = ServerLocator::new(Fixed(None), "localhost");
         let mut uplink = WebSocketUplink::new(
             ScriptedConnector::default(),
             locator,

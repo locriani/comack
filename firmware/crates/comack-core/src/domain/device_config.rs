@@ -276,7 +276,7 @@ mod tests {
         DeviceConfig::from_compile_time(
             &networks,
             ServerEndpoint {
-                host: "comack-server",
+                host: "localhost",
                 port: 8000,
             },
             "comack-display",
@@ -309,7 +309,7 @@ mod tests {
         let long_name = "x".repeat(DEVICE_NAME_MAX_LEN + 1);
         let long_key = "x".repeat(AUTH_KEY_MAX_LEN + 1);
         let server = ServerEndpoint {
-            host: "comack-server",
+            host: "localhost",
             port: 8000,
         };
 

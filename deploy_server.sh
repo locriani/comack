@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy Comack to a host you control
-# Usage: ./deploy_comack-server.sh [user@host] [dest-dir]
+# Usage: ./deploy_server.sh [user@host] [dest-dir]
 #   user@host can be a plain LAN name, an IP, or a Tailscale hostname,
 #   e.g. "comack@myhost.tail1234.ts.net" or "comack@192.168.1.20"
 set -e

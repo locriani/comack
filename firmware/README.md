@@ -60,7 +60,7 @@ cargo build -p comack-core --target thumbv7em-none-eabihf # proves the core is n
 Runs the real core against a live server. It streams synthetic speech and silence, and writes the screen to a PBM image:
 
 ```sh
-cargo run -p comack-sim -- --host comack-server --port 8000 --out screen.pbm
+cargo run -p comack-sim -- --host localhost --port 8000 --out screen.pbm
 # type f / b / t + Enter for forward / back / trigger
 ```
 
@@ -81,6 +81,12 @@ cd firmware/esp
 cp src/secrets.rs.example src/secrets.rs   # compile-time fallback: Wi-Fi networks + Tailscale auth key
 cargo run --release                        # builds ESP-IDF v5.5.5 on first run, flashes, opens the monitor
 ```
+
+The compile-time fallback carries the server address too: `SERVER.host` in
+`firmware/crates/comack-core/src/config.rs` defaults to `localhost` — right
+for the desktop simulator, not for a real device. Set your server's hostname
+there before flashing an ESP target (the value is compiled in; a
+runtime-stored config on the device overrides it later).
 
 `esp-idf-sys` builds the vendored C components in `components/`. It also generates Rust bindings for `microlink.h` as `esp_idf_svc::sys::microlink`.
 
@@ -168,7 +174,7 @@ and `espflash flash` as the manual flow above. Run it from the repo root:
 | Flag | Meaning | Default |
 |---|---|---|
 | `--ssid`, `--password` | Wi-Fi credentials for the device | prompted (password input hidden) |
-| `--server` | server hostname or `ip:port` | `comack-server:8000` |
+| `--server` | server hostname or `ip:port` | `localhost:8000` |
 | `--name` | device name | `comack-display` |
 | `--tskey` | Tailscale auth key (`tskey-auth-…`) | empty — placeholder kept |
 | `--port` | serial device for flashing or monitor | auto-detected by espflash |
@@ -225,7 +231,7 @@ auth key.
    the namespace is simply empty.
 2. **Compile-time fallback.** With nothing stored — or the store unreadable —
    the build's `secrets.rs` (networks, Tailscale key) and `config.rs`
-   constants (`comack-server`, port 8000, `comack-display`) apply, with a
+   constants (`localhost`, port 8000, `comack-display`) apply, with a
    logged reason. Already-flashed devices therefore boot exactly as before,
    and `secrets.rs` stays supported.
 
