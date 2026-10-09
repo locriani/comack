@@ -57,7 +57,7 @@ class TestPathClassification:
         for path in (
             "/api/status", "/api/config", "/api/config/test/llm",
             "/api/comics/history", "/api/comics/generate", "/api/comics/12/regenerate",
-            "/api/transcripts/recent", "/api/prompts", "/ws/events",
+            "/api/transcripts/recent", "/api/prompts", "/api/devices", "/ws/events",
         ):
             assert not is_open_path(path), path
 

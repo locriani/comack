@@ -123,20 +123,54 @@ light install):
 
 The device connects *out* to the server; check the server side first:
 
-1. **Server log.** A successful device stream logs
+1. **Connected devices.** `GET /api/devices` lists every live WebSocket
+   connection the server holds — the device's audio stream, dashboard event
+   subscribers — with the peer IP, when it connected, and the last time it
+   sent traffic:
+
+   ```bash
+   curl -H "Authorization: Bearer $WEB_TOKEN" http://<server>:8000/api/devices
+   ```
+
+   (Omit the header when `WEB_TOKEN` is unset.) The device's stream shows up
+   as `audio streamer` while it streams; an empty list means the device has
+   no connection at all — go to step 2.
+2. **Server log.** A successful device stream logs
    `reTerminal E1001 audio streamer connected.` on `/ws/audio`. Absent line =
    the device isn't reaching the server (wrong `HOST:PORT`, different
    network, Tailscale down).
-2. **Event feed.** Display refreshes ride `/ws/events`; the simulator and
+3. **Event feed.** Display refreshes ride `/ws/events`; the simulator and
    firmware reconnect every 2 s on failure, so a transient server restart
    self-heals.
-3. **Server reachable?** `curl http://<server>:8000/api/status` from the
+4. **Server reachable?** `curl http://<server>:8000/api/status` from the
    device's network position. With `WEB_TOKEN` set, `/ws/audio` and the
    comic-read paths stay tokenless on purpose (see
    [self-hosting](self-hosting.md#access-token-web_token)) — the device never
    sends a token, so a 401 on those paths is a bug, not a config problem.
-4. **Blank e-paper, server fine.** The panel stays white until a comic
+5. **Blank e-paper, server fine.** The panel stays white until a comic
    completes — with no LLM configured nothing will ever render (see the top
    of this page).
-5. **Firmware-side causes** (flashing, WiFi credentials, button wiring) are
+6. **Firmware-side causes** (flashing, WiFi credentials, button wiring) are
    covered in [firmware/README.md](../firmware/README.md).
+
+## Capturing traffic (tcpdump on the server, Wireshark on your desktop)
+
+When it is still unclear who is failing to talk to whom — the device *should*
+be connecting, nothing in the logs moves — capture on the server and read the
+capture on your desktop:
+
+1. On the server: `sudo tcpdump -i any port 8000 -w comack.pcap` (`-i any`
+covers every interface, tailnet included).
+2. Reproduce the problem while it captures: restart the device, reload the
+dashboard, re-run the failing curl.
+3. Stop with Ctrl-C, copy `comack.pcap` off the server, and open it in
+Wireshark on your desktop. Useful filters: `tcp.port == 8000`, then follow
+the TCP stream that misbehaves.
+
+There is deliberately no tshark on the server — capture there, analyze on the
+desktop.
+
+(Verification note: the `/api/devices` behavior in this section is covered by
+`tests/test_devices.py`. The tcpdump/Wireshark commands follow the tools'
+documented interfaces and were not executed in this sandbox — neither tool is
+installed here.)

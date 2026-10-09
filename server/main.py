@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
+from server.devices import AUDIO_STREAMER, EVENT_SUBSCRIBER, device_registry, display_name
 from server.auth import authorized
 from server.config import settings, warn_on_unknown_env, COMICS_DIR, STATIC_DIR
 from server.config_api import router as config_router
@@ -307,10 +308,17 @@ async def ws_audio_stream(websocket: WebSocket):
     Receives continuous 16kHz 16-bit mono PCM stream from reTerminal E1001 or simulator.
     """
     await websocket.accept()
+    device_registry.connect(
+        websocket,
+        display_name(websocket.query_params.get("name"), AUDIO_STREAMER),
+        ip=websocket.client.host,
+        now=time.time(),
+    )
     logger.info("reTerminal E1001 audio streamer connected.")
     try:
         while True:
             data = await websocket.receive_bytes()
+            device_registry.touch(websocket, now=time.time())
             if data:
                 is_speech, silence_duration = vad.process_chunk(data)
                 trigger_listener.feed(data, is_speech)
@@ -318,6 +326,8 @@ async def ws_audio_stream(websocket: WebSocket):
         logger.info("reTerminal audio stream disconnected.")
     except Exception as e:
         logger.warning(f"Audio stream error: {e}")
+    finally:
+        device_registry.disconnect(websocket)
 
 
 @app.websocket("/ws/events")
@@ -332,19 +342,24 @@ async def ws_events(websocket: WebSocket):
         return
     await websocket.accept()
     event_subscribers.add(websocket)
-    
-    # Send initial snapshot
-    await websocket.send_text(json.dumps({
-        "event": "INIT_SNAPSHOT",
-        "sneaky_status": sneaky_dispatcher.get_status(),
-        "current_comic": db.get_current_displayed_comic(),
-        "active_arc": db.get_active_arc()
-    }))
-    
+    device_registry.connect(
+        websocket,
+        display_name(websocket.query_params.get("name"), EVENT_SUBSCRIBER),
+        ip=websocket.client.host,
+        now=time.time(),
+    )
     try:
+        # Send initial snapshot
+        await websocket.send_text(json.dumps({
+            "event": "INIT_SNAPSHOT",
+            "sneaky_status": sneaky_dispatcher.get_status(),
+            "current_comic": db.get_current_displayed_comic(),
+            "active_arc": db.get_active_arc()
+        }))
         while True:
             # Handle client heartbeats or incoming commands
             msg = await websocket.receive_text()
+            device_registry.touch(websocket, now=time.time())
             data = json.loads(msg)
             if data.get("cmd") == "PING":
                 await websocket.send_text(json.dumps({
@@ -355,6 +370,11 @@ async def ws_events(websocket: WebSocket):
         event_subscribers.discard(websocket)
     except Exception:
         event_subscribers.discard(websocket)
+    finally:
+        # The snapshot send is inside the try so a failed first push still
+        # reaps the registry entry (event_subscribers has the same gap, kept
+        # as-is — this endpoint only guarantees its own bookkeeping).
+        device_registry.disconnect(websocket)
 
 
 # --- REST Endpoints ---
@@ -383,6 +403,16 @@ async def get_system_status():
             "pos_scramble_rate": settings.POS_SCRAMBLE_RATE
         }
     }
+
+
+@app.get("/api/devices")
+async def get_connected_devices():
+    """Currently-connected WebSocket clients — the device's audio stream and
+dashboard event subscribers — with peer IP and last traffic time. The first
+check when the device seems unreachable (docs/troubleshooting.md). Gated by
+WEB_TOKEN like every other /api route: unlike the device-critical paths this
+one is browser-facing, so it is never tokenless when a token is set."""
+    return {"devices": device_registry.snapshot()}
 
 
 @app.post("/api/trigger")
