@@ -1,0 +1,90 @@
+Comack
+Copyright 2026 Zach Gardner
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+Third-party components vendored into this repository remain under their own
+licenses, described below.
+
+Note: the Rust firmware crates (firmware/Cargo.toml and firmware/esp/Cargo.toml)
+carry `license = "MIT"` metadata. MIT and Apache-2.0 are both permissive and
+compatible for redistribution; reconciling these declarations with the root
+Apache-2.0 license is planned (see ROADMAP.md).
+
+Python dependencies (server/) are installed from PyPI and are governed by
+their own licenses; no third-party Python code is vendored here.
+
+--------------------------------------------------------------------------------
+
+1. MicroLink — ESP32 Tailscale client
+   Location:   firmware/components/microlink/
+   Upstream:   https://github.com/CamM2325/microlink
+   License:    MIT
+   Copyright:  (c) 2025-2026 Cameron Malone
+
+   The vendored copy originally shipped without the upstream LICENSE file;
+   the full text is now included at firmware/components/microlink/LICENSE and
+   reproduced here to satisfy the MIT notice requirement.
+
+   Redistribution is permitted under MIT (retain the copyright and permission
+   notice). The upstream license file also notes:
+
+   - WireGuard is a registered trademark of Jason A. Donenfeld.
+   - Tailscale is a trademark of Tailscale Inc.; this implementation is an
+     independent, reverse-engineered work and is not affiliated with or
+     endorsed by Tailscale Inc.
+   - The zero-copy WireGuard receive mode (CONFIG_ML_ZERO_COPY_WG) was
+     contributed by dj-oyu (https://github.com/dj-oyu/microlink), a fork of
+     the upstream project, under the same MIT license.
+
+   MIT License
+
+   Copyright (c) 2025-2026 Cameron Malone
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+2. wireguard_lwip — WireGuard implementation for lwIP
+   Location:   firmware/components/wireguard_lwip/
+               firmware/components/microlink/components/wireguard_lwip/ (nested copy)
+   License:    BSD 3-Clause (custom variant, with a non-endorsement clause naming
+               "Floorsense Ltd" and "Agile Workspace Ltd")
+   Copyright:  (c) 2021 Daniel Hope (www.floorsense.nz)
+
+   The full license text is retained in-tree at
+   firmware/components/wireguard_lwip/LICENSE (and the nested copy), as its
+   redistribution terms require. Redistribution in source and binary form is
+   permitted with notice retention; the names of Floorsense Ltd and Agile
+   Workspace Ltd may not be used to endorse derived products without prior
+   written permission.
+
+   Bundled crypto sources, per the component's README: BLAKE2S (RFC 7693),
+   ChaCha20 (D. J. Bernstein's reference code), Poly1305 (poly1305-donna by
+   floodyberry), and X25519. The reference-crypto X25519 carries its own MIT
+   notice at firmware/components/wireguard_lwip/src/crypto/refc/x25519-license.txt
+   (Copyright (c) 2015-2016 Cryptography Research, Inc.). The Cortex-M0
+   Curve25519 assembly in src/crypto/cortex/ is from the μNaCl project
+   (https://munacl.cryptojedi.org), marked Public Domain.
+
+3. cJSON — ultra-lightweight JSON parser
+   Location:   firmware/components/cjson/
+   License:    MIT
+   Copyright:  (c) 2009-2017 Dave Gamble and cJSON contributors
+
+   The MIT license notice is embedded in the file headers of cJSON.c and
+   cJSON.h, satisfying the MIT notice requirement. Redistribution is permitted
+   with that notice retained.

@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Deploy Comack to comack-server
+# Deploy Comack to a host you control
+# Usage: ./deploy_comack-server.sh [user@host] [dest-dir]
+#   user@host can be a plain LAN name, an IP, or a Tailscale hostname,
+#   e.g. "comack@myhost.tail1234.ts.net" or "comack@192.168.1.20"
 set -e
 
-DEST_HOST="${1:-comack-server@comack-server.example-tailnet.ts.net}"
-DEST_DIR="${2:-/home/comack-server/comack}"
+DEST_HOST="${1:-user@your-server}"
+DEST_DIR="${2:-/home/your-user/comack}"
 
 echo "=========================================="
 echo " Deploying Comack to $DEST_HOST:$DEST_DIR "
 echo "=========================================="
 
 # Rsync project files excluding venv, git, and the server's own .env
-rsync -avz --exclude '.env' --exclude '.venv'--exclude '.venv_pio' --exclude '.git' --exclude 'firmware' --exclude 'simulator/__pycache__' --exclude '__pycache__' --exclude 'data/' \
+rsync -avz --exclude '.env' --exclude '.venv' --exclude '.venv_pio' --exclude '.git' --exclude 'firmware' --exclude 'simulator/__pycache__' --exclude '__pycache__' --exclude 'data/' \
     ./ "$DEST_HOST:$DEST_DIR"
 
 echo "Sync complete."

@@ -4,13 +4,16 @@ After=network.target
 
 [Service]
 Type=simple
-User=comack-server
-WorkingDirectory=/home/comack-server/comack
-ExecStart=/home/comack-server/comack/.venv/bin/uvicorn server.main:app --host 0.0.0.0 --port 8000
+# Run as a dedicated (or your own) user; adjust the paths below to where you clone the repo.
+User=your-user
+WorkingDirectory=/home/your-user/comack
+ExecStart=/home/your-user/comack/.venv/bin/uvicorn server.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-Environment=LLM_URL=http://comack-server.example-tailnet.ts.net:80/
+# LLM_URL: your OpenAI-compatible endpoint (llama.cpp, vLLM, Ollama...), e.g.
+#   http://<your-llm-server>:80/   -- plain IP, LAN hostname, or Tailscale hostname
+Environment=LLM_URL=http://your-llm-server:80/
 Environment=FLUX_MODEL_ID=black-forest-labs/FLUX.1-schnell
 Environment=SNEAKY_SILENCE_SECONDS=0
 # Models are already cached; skip the per-load huggingface.co revision check.

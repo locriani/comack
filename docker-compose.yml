@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   comack:
     build: .
@@ -10,10 +8,14 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - LLM_URL=http://127.0.0.1:80/v1
+      # Cadence: a new comic is generated when enough requested lines have arrived,
+      # but no sooner than COMIC_MIN_MINUTES and no later than COMIC_MAX_MINUTES.
+      - COMIC_MIN_MINUTES=30
+      - COMIC_MAX_MINUTES=720
+      # Narrative arc length bounds, in panels
+      - ARC_MIN_PANELS=12
+      - ARC_MAX_PANELS=60
       - SNEAKY_SILENCE_SECONDS=0
-      - COMIC_CYCLE_MINUTES=30
       - POS_SCRAMBLE_RATE=0.25
-      - ARC_MIN_HOURS=4.0
-      - ARC_MAX_HOURS=168.0
     volumes:
       - ./data:/app/data
