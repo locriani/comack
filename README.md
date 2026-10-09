@@ -62,6 +62,33 @@ The container includes the AI dependencies; on first comic it downloads the
 configured image model (SD-Turbo by default). Without an LLM at `LLM_URL` the
 pipeline stops before mining — everything else runs.
 
+### Configuration presets
+
+`.env.example` lists every setting with safe defaults. Three presets bundle the
+settings that differ per hardware profile — start from the one matching where
+the server runs, then edit `LLM_URL`:
+
+| Preset | Pick it when |
+|---|---|
+| `presets/local-gpu.env` | This machine has a CUDA GPU (~10 GB free VRAM): local FLUX.1-schnell rendering, best quality. |
+| `presets/external-api.env` | Images should render on a remote OpenAI-compatible image API (`FLUX_API_URL`); no local GPU needed. |
+| `presets/cpu-only.env` | No GPU at all: tiny Whisper + 1-step SD-Turbo on CPU, with a slower cadence to absorb renders. |
+
+```sh
+cp presets/local-gpu.env .env   # then edit LLM_URL
+```
+
+The running server exposes the same settings: `GET /api/config` returns the
+resolved configuration (secret-shaped values like `HF_TOKEN` masked; add
+`?include_secrets=true` to reveal), and `PATCH /api/config` accepts a JSON
+object of changes — e.g. `curl -X PATCH localhost:8000/api/config
+-H 'Content-Type: application/json' -d '{"COMIC_MIN_MINUTES": 10}'`.
+Runtime-adjustable fields apply immediately (`"applied"`); fields bound at
+startup (model sizes, devices, host/port) come back `"restart_required"` and
+are persisted to `.env` so they survive the restart. A value that is also set
+as a real environment variable (systemd unit, docker-compose) keeps winning
+over `.env` — the PATCH response notes when that's the case.
+
 ### Desktop simulator (no hardware needed)
 
 The Python simulator emulates the reTerminal: it streams audio to the server

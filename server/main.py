@@ -15,7 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from contextlib import asynccontextmanager
 
-from server.config import settings, COMICS_DIR, STATIC_DIR
+from server.config import settings, warn_on_unknown_env, COMICS_DIR, STATIC_DIR
+from server.config_api import router as config_router
 from server.storage import db
 from server.audio.vad import AudioVAD, SpeechSegment
 from server.audio.transcriber import Transcriber, TriggerListener
@@ -208,6 +209,9 @@ async def periodic_transcription():
 async def lifespan(app: FastAPI):
     global transcriber, trigger_listener, vad, sneaky_dispatcher, cycle_task
     
+    # 0. Surface config drift before anything reads a setting
+    warn_on_unknown_env()
+
     # 1. Initialize components
     loop = asyncio.get_running_loop()
 
@@ -258,6 +262,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Comack", lifespan=lifespan)
+app.include_router(config_router)
 
 
 # --- Static and Web UI ---

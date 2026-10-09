@@ -4,7 +4,6 @@ Exclusively uses black-forest-labs/FLUX.1-schnell for state-of-the-art
 high-contrast graphic novel panel illustrations.
 """
 import io
-import os
 import time
 import logging
 from typing import Optional, Tuple
@@ -42,7 +41,7 @@ def _load_flux_pipeline():
     except ImportError as e:
         raise FluxUnavailable(e)
 
-    token = os.getenv("HF_TOKEN")
+    token = settings.HF_TOKEN
     if not token:
         token_path = Path.home() / ".cache" / "huggingface" / "token"
         if token_path.exists():
