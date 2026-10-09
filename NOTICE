@@ -1,14 +1,9 @@
 Comack
 Copyright 2026 Zach Gardner
 
-This product is licensed under the Apache License, Version 2.0 (see LICENSE).
-Third-party components vendored into this repository remain under their own
-licenses, described below.
-
-Note: the Rust firmware crates (firmware/Cargo.toml and firmware/esp/Cargo.toml)
-carry `license = "MIT"` metadata. MIT and Apache-2.0 are both permissive and
-compatible for redistribution; reconciling these declarations with the root
-Apache-2.0 license is planned (see ROADMAP.md).
+Comack is released under the MIT License (see LICENSE). MIT imposes no NOTICE
+requirement, so this file is provided voluntarily: the third-party components
+vendored into this repository remain under their own licenses, described below.
 
 Python dependencies (server/) are installed from PyPI and are governed by
 their own licenses; no third-party Python code is vendored here.

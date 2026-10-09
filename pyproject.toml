@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Room audio in, surreal comics out: a privacy-first e-paper comic appliance."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "Apache-2.0"
+license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Zach Gardner" }]
 classifiers = [

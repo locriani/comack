@@ -68,4 +68,4 @@ firmware change; you can push a PR and let CI do the cross-compile check.
   API keys and `.env` values stay out of the repo (`.env` and
   `firmware/esp/src/secrets.rs` are gitignored for this reason).
 - Licensing: by contributing, you agree your contributions are licensed under
-  the Apache License 2.0 (see [LICENSE](LICENSE)).
+  the MIT License (see [LICENSE](LICENSE)).

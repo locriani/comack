@@ -120,5 +120,5 @@ expectations. Where the project is headed — and what landed recently — is in
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE) (which covers the
+MIT — see [LICENSE](LICENSE) and [NOTICE](NOTICE) (which covers the
 vendored firmware components: MicroLink, wireguard_lwip, cJSON).

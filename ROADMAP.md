@@ -8,8 +8,9 @@ promised or scheduled — it's the direction of travel. Ideas and PRs welcome.
 Shipped across recent rounds (visible in the git log and the links from
 [README](README.md)):
 
-- **Licensing & hygiene** — Apache-2.0 `LICENSE` with a third-party `NOTICE`
-  covering the vendored firmware components.
+- **Licensing & hygiene** — MIT `LICENSE` (relicensed from Apache-2.0 in
+  v0.1.1) with a third-party `NOTICE` covering the vendored firmware
+  components.
 - **Python CI** — a workflow running Ruff, the pytest suite (light core) and
   Semgrep on push/PR, with the README badge.
 - **Validated configuration** — pydantic-settings with bounds and paired
@@ -61,9 +62,9 @@ Shipped across recent rounds (visible in the git log and the links from
 
 ## Project plumbing
 
-- **License metadata reconciliation.** The firmware crates declare
-  `license = "MIT"` while the repository root is Apache-2.0 (both permissive;
-  see [NOTICE](NOTICE)) — settle on a single declaration.
+- **License metadata reconciliation** — resolved: the repository root was
+  relicensed to MIT in v0.1.1, now matching the firmware crates'
+  `license = "MIT"` declaration.
 - **Compose settings ergonomics.** `docker-compose.yml` hardcodes its
   `environment:` block with no `${VAR}` interpolation, so a repo `.env` cannot
   drive container settings without editing the compose file (documented in
