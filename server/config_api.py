@@ -142,25 +142,32 @@ async def patch_config(updates: dict[str, Any] = Body(..., description="Object o
                  for name in unknown]
         raise HTTPException(status_code=400, detail={"errors": hints})
 
-    merged = settings.model_dump() | updates
+    # The dashboard round-trips GET's masked values, so a secret field sent back as the
+    # mask ("********") means "unchanged": drop it and keep the stored value instead of
+    # persisting the literal mask over the real key. (The settings UI sends only changed
+    # fields; this guards every other client of the same API contract.)
+    changes = {name: value for name, value in updates.items()
+               if not (is_secret_field(name) and value == MASKED)}
+
+    merged = settings.model_dump() | changes
     try:  # full-model validation: same bounds, enums and cross-checks as startup
         candidate = Settings(**merged)
     except ValidationError as error:
         raise HTTPException(status_code=400, detail={"errors": format_validation_error(error)}) from error
 
     results: dict[str, str] = {}
-    for name in updates:
+    for name in changes:
         setattr(settings, name, getattr(candidate, name))
         results[name] = "restart_required" if name in RESTART_REQUIRED_FIELDS else "applied"
 
     notes = []
     try:
-        persist_env_updates({name: format_env_value(getattr(candidate, name)) for name in updates})
+        persist_env_updates({name: format_env_value(getattr(candidate, name)) for name in changes})
     except OSError as error:
         logger.error("Could not persist settings to %s: %s", ENV_FILE, error)
         notes.append(f"Settings applied for this run, but persisting to {ENV_FILE} failed: {error}")
 
-    for name in updates:
+    for name in changes:
         if name in os.environ:
             notes.append(
                 f"{name} is also set in the process environment (systemd unit or docker-compose); "
@@ -169,5 +176,5 @@ async def patch_config(updates: dict[str, Any] = Body(..., description="Object o
     if restarts := [name for name, status in results.items() if status == "restart_required"]:
         logger.info("Config patched (restart required for %s).", ", ".join(restarts))
     else:
-        logger.info("Config patched: %s.", ", ".join(updates))
+        logger.info("Config patched: %s.", ", ".join(changes))
     return {"results": results, "notes": notes, "config": _masked_config(include_secrets=False)}

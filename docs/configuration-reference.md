@@ -105,11 +105,26 @@ Grouped like `.env.example`.
 | `FLUX_GGUF_URL` | str | `https://huggingface.co/city96/FLUX.1-schnell-gguf/blob/main/flux1-schnell-Q4_K_S.gguf` | — | hot* | Where to fetch the GGUF-quantized FLUX transformer from (downloaded once, cached). |
 | `FLUX_MIN_FREE_VRAM_GB` | float | `10.5` | ≥ 0 | hot* | Pause generation (and wait) when free VRAM drops below this, so the LLM can breathe. |
 | `FLUX_VRAM_WAIT_SECONDS` | float | `180` | ≥ 0 | hot* | How long to wait for VRAM before giving up on a panel. |
-| `FLUX_API_URL` | str | `""` | — | hot* | External image API (`/v1/images/generations`); empty = render locally. |
+| `FLUX_API_URL` | str | `""` | — | hot* | External image API (OpenAI-compatible `/v1/images/generations`). Set = **remote-only**: panels render on the API and the local diffusers stack is never touched. Empty = render locally. |
+| `FLUX_API_KEY` | str | `""` | — | hot* | Bearer token for the external image API, sent on every remote render and the connectivity probe while `FLUX_API_URL` is set (masked in GET /api/config). |
+| `FLUX_API_MODEL` | str | `""` | — | hot* | Model name sent to the external image API in remote-only mode (empty = omit the field, the provider's default model is used). |
 
 \* "hot" with an asterisk: the FLUX pipeline is released after every comic, so
 `FLUX_*` changes apply at the **next render**, not mid-render. In the PATCH /
 settings-page sense they are still `applied` immediately.
+
+**Remote-only mode.** Setting `FLUX_API_URL` (with or without a trailing `/v1`)
+makes the image API the *only* rendering backend: each panel is one
+OpenAI-compatible `POST /v1/images/generations` request asking for base64 (a
+provider that answers with a URL instead is still handled), retried on the
+usual panel backoff, with `FLUX_API_KEY` sent as a Bearer token and
+`FLUX_API_MODEL` carried as the request's model when set. The local diffusers
+stack — torch import, GGUF download, VRAM guard — is never touched, so a box
+with no GPU and no model cache renders fine. If the API never answers, the
+comic fails loudly (`PanelArtFailed`; nothing is published) and remote calls
+show up in `/api/prompts` like local renders do. Empty `FLUX_API_URL` is the
+unchanged local path. The Docker image still ships the AI stack this round;
+slimming it for remote-only installs is future work.
 
 ## Display (fixed hardware constants)
 

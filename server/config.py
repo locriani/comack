@@ -129,7 +129,15 @@ class Settings(BaseSettings):
         10.5, ge=0, description="Pause generation (and wait) when free VRAM drops below this, so the LLM can breathe.")
     FLUX_VRAM_WAIT_SECONDS: float = Field(180, ge=0, description="How long to wait for VRAM before giving up on a panel.")
     FLUX_API_URL: str = Field(
-        "", description="External image API (/v1/images/generations); empty = render locally.")
+        "", description="External image API (OpenAI-compatible /v1/images/generations). "
+        "Set = remote-only: panels render on the API and the local diffusers stack is never touched. "
+        "Empty = render locally.")
+    FLUX_API_KEY: str = Field(
+        "", description="Bearer token for the external image API, sent on every remote render "
+        "and the connectivity probe while FLUX_API_URL is set (masked in GET /api/config).")
+    FLUX_API_MODEL: str = Field(
+        "", description="Model name sent to the external image API in remote-only mode "
+        "(empty = omit the field, the provider's default model is used).")
 
     # E-paper display specs: fixed hardware, not env-overridable.
     DISPLAY_WIDTH: ClassVar[int] = 800

@@ -41,10 +41,10 @@ def _resolve(overrides: Dict[str, Any], mapping: Dict[str, str]) -> Dict[str, st
     }
 
 
-async def _http_get(url: str) -> httpx.Response:
+async def _http_get(url: str, headers: Dict[str, str] | None = None) -> httpx.Response:
     """Network seam for tests: the only place a probe touches the network."""
     async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_S) as client:
-        return await client.get(url)
+        return await client.get(url, headers=headers)
 
 
 def _import_image_stack():
@@ -148,14 +148,22 @@ def _local_image_detail() -> Dict[str, Any]:
 
 @router.post("/image")
 async def test_image(overrides: Dict[str, Any] = Body(default={})):
-    """Probe the image backend: an external API's reachability, or the local
-    diffusion stack's install state, device and free VRAM. Never loads a pipeline."""
+    """Probe the image backend: an external API's reachability (authenticated
+    when FLUX_API_KEY is set), or the local diffusion stack's install state,
+    device and free VRAM. Never loads a pipeline, never generates an image."""
     resolved = _resolve(overrides, IMAGE_OVERRIDES)
     url = resolved["url"].strip()
     if url:
         result: Dict[str, Any] = {"ok": False, "message": "", "detail": {"mode": "external", "url": url}}
+        probe_url = llm.api_url(url, "models")
         try:
-            return _find(await _http_get(llm.api_url(url, "models")), result)
+            if settings.FLUX_API_KEY:
+                # The key rides as a Bearer header exactly as a remote render would send it;
+                # this stays a reachability check, never a paid generation.
+                resp = await _http_get(probe_url, {"Authorization": f"Bearer {settings.FLUX_API_KEY}"})
+            else:
+                resp = await _http_get(probe_url)
+            return _find(resp, result)
         except Exception as error:
             return _unreachable(result, error)
     result = {"ok": False, "message": "", "detail": {}}

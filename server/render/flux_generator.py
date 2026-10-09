@@ -130,15 +130,30 @@ class FluxGenerator:
             model's own resolution with about this aspect ratio (the compositor saves and fits it)
         :param genre: Comic genre context
         :return: the model's original RGB image, or None only when no local pipeline exists at all
-        :raises PanelArtFailed: every retry failed
+        :raises PanelArtFailed: every retry failed (remote-only mode: the image API never answered)
         """
-        # 1. External ComfyUI / HTTP endpoint if configured
+        # 1. Remote-only mode: FLUX_API_URL set means the OpenAI-compatible image API is
+        #    the only backend — the local diffusers stack (torch import, GGUF download,
+        #    VRAM guard) is never touched, even when every attempt fails: exhaustion
+        #    raises PanelArtFailed, which the compositor already handles.
         if settings.FLUX_API_URL:
-            img = self._generate_via_api(scene_description, target_size)
-            if img:
-                return img
+            prompt = f"comic panel: {scene_description}"
+            for attempt, delay in enumerate((*RETRY_DELAYS_S, None), 1):
+                try:
+                    return self._generate_via_api(prompt, target_size)
+                except Exception as e:
+                    if delay is None:
+                        raise PanelArtFailed(
+                            f"remote generation failed after {attempt} attempts: {e}") from e
+                    logger.warning(f"Remote panel attempt {attempt} failed ({e}); retrying in {delay}s.")
+                    time.sleep(delay)
 
         # 2. Local diffusion pipeline, retried with backoff (OOM, LLM hogging VRAM, load errors)
+        return self._generate_local_loop(scene_description, target_size)
+
+    def _generate_local_loop(self, scene_description: str, target_size: Tuple[int, int]) -> Optional[Image.Image]:
+        """The local path, unchanged: retried with backoff; None (procedural art) when
+        no local pipeline exists at all."""
         for attempt, delay in enumerate((*RETRY_DELAYS_S, None), 1):
             try:
                 return self._generate_local(scene_description, target_size)
@@ -205,24 +220,49 @@ class FluxGenerator:
         entry["output"] = f"[{gen_w}x{gen_h} image, {steps} steps]"
         return raw_img.convert("RGB")
 
-    def _generate_via_api(self, prompt: str, target_size: Tuple[int, int]) -> Optional[Image.Image]:
-        """Optional HTTP generation if ComfyUI or SD endpoint is running on comack-server."""
+    def _generate_via_api(self, prompt: str, target_size: Tuple[int, int]) -> Image.Image:
+        """One OpenAI-compatible image request: POST {base}/v1/images/generations
+        (llm.api_url joins, so the base may or may not already end in /v1). Asks for
+        base64 explicitly; a provider that ignored that and answered with a URL gets
+        its bytes fetched. Raises on any failure — the retry loop in
+        generate_panel_art owns the backoff, so nothing here degrades into None."""
+        import base64
+
         import httpx
+
+        headers = {}
+        if settings.FLUX_API_KEY:
+            headers["Authorization"] = f"Bearer {settings.FLUX_API_KEY}"
+        payload: dict = {
+            "prompt": prompt,
+            "n": 1,
+            "size": f"{target_size[0]}x{target_size[1]}",
+            "response_format": "b64_json",
+        }
+        if settings.FLUX_API_MODEL:
+            payload["model"] = settings.FLUX_API_MODEL
+
+        # Remote calls show up in /api/prompts like local renders do.
+        entry = llm.log_call(settings.FLUX_API_MODEL or settings.FLUX_MODEL_ID, "", prompt)
         try:
             with httpx.Client(timeout=60.0) as client:
-                resp = client.post(
-                    f"{settings.FLUX_API_URL.rstrip('/')}/v1/images/generations",
-                    json={"prompt": prompt, "size": f"{target_size[0]}x{target_size[1]}"}
-                )
-                if resp.status_code == 200:
-                    import base64
-                    data = resp.json()
-                    b64_str = data["data"][0]["b64_json"]
-                    img_bytes = base64.b64decode(b64_str)
-                    return Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                resp = client.post(llm.api_url(settings.FLUX_API_URL, "images/generations"),
+                                   json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()["data"][0]
+                if data.get("b64_json"):
+                    img = Image.open(io.BytesIO(base64.b64decode(data["b64_json"])))
+                elif data.get("url"):
+                    with client.stream("GET", data["url"]) as dl:
+                        dl.raise_for_status()
+                        img = Image.open(io.BytesIO(dl.read()))
+                else:
+                    raise ValueError(f"no b64_json or url in response: {list(data)}")
+            entry["output"] = f"[remote image {img.width}x{img.height}]"
+            return img.convert("RGB")
         except Exception as e:
-            logger.warning(f"Error querying FLUX API endpoint: {e}")
-        return None
+            logger.warning(f"Remote image API error ({settings.FLUX_API_URL}): {e}")
+            raise
 
 
 flux_generator = FluxGenerator()
