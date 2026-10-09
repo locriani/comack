@@ -6,7 +6,7 @@
 
 use core::fmt::Debug;
 
-use crate::domain::{ButtonLevels, Frame, Instant, Issue};
+use crate::domain::{Button, ButtonLevels, Frame, Instant, Issue};
 
 /// A monotonic clock.
 pub trait Clock {
@@ -49,6 +49,20 @@ pub trait ComicTrigger {
 
     /// Fire the trigger.
     fn trigger(&mut self) -> Result<(), Self::Error>;
+}
+
+/// Reports button presses to the server, where the dashboard shows a chip.
+pub trait PressReporter {
+    /// Report one press. Fire-and-forget: the adapter logs failures and
+    /// carries on, so a report never blocks navigation.
+    fn report(&mut self, button: Button);
+}
+
+/// Switches the device's press-indication LED.
+pub trait PressFeedback {
+    /// Turn the press LED on or off. The LED is cosmetic: the adapter logs
+    /// failures and carries on, so switching never blocks the viewer.
+    fn set_led(&mut self, on: bool);
 }
 
 /// A source of 16-bit mono PCM audio.

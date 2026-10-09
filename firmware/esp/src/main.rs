@@ -8,22 +8,25 @@
 //! * Main task (core 1): `ComicViewer` polling the server, driving the
 //!   e-paper and the front buttons.
 
+mod buttons;
 mod clock;
 mod latch;
+mod led;
 mod microphone;
 mod secrets;
 mod tailnet;
 mod wifi;
 
 use std::ffi::CString;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use comack_core::adapters::epd::CHUNK_BYTES;
 use comack_core::adapters::{
-    ActiveLowButtons, Epd7in5, HttpClient, HttpComicService, HttpConfig, ServerLocator,
-    WebSocketUplink, WsConfig,
+    Epd7in5, HttpClient, HttpComicService, HttpConfig, PressLatch, ServerLocator, WebSocketUplink,
+    WsConfig,
 };
 use comack_core::application::{AudioStreamer, ComicViewer, StreamerConfig, ViewerConfig};
 use comack_core::config::{self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE_HZ, AUDIO_WS_PATH};
@@ -41,7 +44,9 @@ use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use log::{info, warn};
 
+use crate::buttons::InterruptButtons;
 use crate::clock::EspClock;
+use crate::led::InvertedLed;
 use crate::microphone::PdmMicrophone;
 use crate::tailnet::{Tailnet, TailnetConfig};
 
@@ -95,11 +100,17 @@ fn main() -> Result<()> {
         PinDriver::input(pins.gpio13, Pull::Up)?, // BUSY, low while busy
         FreeRtos,
     );
-    let buttons = ActiveLowButtons::new(
+    // Front buttons; falling-edge interrupts latch presses that arrive
+    // while the viewer's loop is blocked (see InterruptButtons).
+    let buttons = InterruptButtons::new(
+        Arc::new(PressLatch::new()),
         PinDriver::input(pins.gpio4, Pull::Up)?, // right white: forward
         PinDriver::input(pins.gpio5, Pull::Up)?, // left white: back
         PinDriver::input(pins.gpio3, Pull::Up)?, // green: trigger
-    );
+    )
+    .context("buttons")?;
+    // Onboard LED, inverted logic: LOW means on (Seeed board wiki).
+    let led = InvertedLed::new(PinDriver::output(pins.gpio6)?);
 
     wifi::start(peripherals.modem, sysloop, nvs, secrets::WIFI_NETWORKS)?.wait();
 
@@ -138,6 +149,8 @@ fn main() -> Result<()> {
         display,
         buttons,
         EspClock,
+        comics, // the same HTTP service reports the presses
+        led,
         &mut frame,
         ViewerConfig::default(),
     );

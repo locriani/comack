@@ -8,9 +8,12 @@ use core::time::Duration;
 
 use log::{info, warn};
 
-use super::ports::{ButtonInput, Clock, ComicSource, ComicTrigger, FrameDisplay};
+use super::ports::{
+    ButtonInput, Clock, ComicSource, ComicTrigger, FrameDisplay, PressFeedback, PressReporter,
+};
 use crate::domain::{
-    black_pixel_count, ButtonPanel, Direction, Frame, Instant, Issue, Navigator, FRAME_PIXELS,
+    black_pixel_count, Button, ButtonPanel, Direction, Frame, Instant, Issue, LedDwell, Navigator,
+    FRAME_PIXELS,
 };
 
 /// Timing of the viewer loop.
@@ -26,6 +29,8 @@ pub struct ViewerConfig {
     pub trigger_repoll_delay: Duration,
     /// Return to the latest issue after this long without a browse press.
     pub browse_timeout: Duration,
+    /// How long the onboard LED stays lit after any button press.
+    pub led_press_dwell: Duration,
     /// Button sampling period; also debounces the buttons.
     pub tick: Duration,
 }
@@ -36,20 +41,24 @@ impl Default for ViewerConfig {
             poll_interval: Duration::from_secs(10),
             trigger_repoll_delay: Duration::from_secs(2),
             browse_timeout: Duration::from_secs(60),
+            led_press_dwell: Duration::from_millis(150),
             tick: Duration::from_millis(50),
         }
     }
 }
 
 /// The comic viewer. Call [`ComicViewer::tick`] in a loop.
-pub struct ComicViewer<'f, S, D, B, C> {
+pub struct ComicViewer<'f, S, D, B, C, R, F> {
     comics: S,
     display: D,
     buttons: B,
     clock: C,
+    reporter: R,
+    feedback: F,
     frame: &'f mut Frame,
     navigator: Navigator,
     panel: ButtonPanel,
+    led: LedDwell,
     next_poll: Instant,
     /// Deadline of a trigger's catch-up window, while the short trigger
     /// cadence keeps polling for a comic that is still generating.
@@ -57,20 +66,25 @@ pub struct ComicViewer<'f, S, D, B, C> {
     config: ViewerConfig,
 }
 
-impl<'f, S, D, B, C> ComicViewer<'f, S, D, B, C>
+impl<'f, S, D, B, C, R, F> ComicViewer<'f, S, D, B, C, R, F>
 where
     S: ComicSource + ComicTrigger,
     D: FrameDisplay,
     B: ButtonInput,
     C: Clock,
+    R: PressReporter,
+    F: PressFeedback,
 {
     /// `frame` is the download buffer; on the device it lives in PSRAM.
     /// The first tick polls the server straight away.
+    #[allow(clippy::too_many_arguments)] // one argument per port is the point
     pub fn new(
         comics: S,
         display: D,
         buttons: B,
         clock: C,
+        reporter: R,
+        feedback: F,
         frame: &'f mut Frame,
         config: ViewerConfig,
     ) -> Self {
@@ -79,9 +93,12 @@ where
             display,
             buttons,
             clock,
+            reporter,
+            feedback,
             frame,
             navigator: Navigator::new(config.browse_timeout),
             panel: ButtonPanel::default(),
+            led: LedDwell::default(),
             next_poll: Instant::ZERO,
             catchup_until: None,
             config,
@@ -98,10 +115,15 @@ where
 
         let presses = self.panel.update(self.buttons.levels());
         if presses.trigger {
+            self.on_press(Button::Trigger, now);
             self.on_trigger();
         }
         if let Some(direction) = presses.navigate {
+            self.on_press(Button::from(direction), now);
             self.on_navigate(direction);
+        }
+        if self.led.tick(now) {
+            self.feedback.set_led(self.led.is_on());
         }
         self.config.tick
     }
@@ -151,6 +173,16 @@ where
     /// window.
     fn catchup_active(&self, now: Instant) -> bool {
         self.catchup_until.is_some_and(|deadline| now < deadline)
+    }
+
+    /// Report a dispatched press before the viewer acts on it, so the
+    /// press is visible as observed rather than after the refresh. The LED
+    /// comes on with it and goes out when the dwell elapses.
+    fn on_press(&mut self, button: Button, now: Instant) {
+        self.reporter.report(button);
+        if self.led.press(now, self.config.led_press_dwell) {
+            self.feedback.set_led(self.led.is_on());
+        }
     }
 
     fn on_trigger(&mut self) {
@@ -355,11 +387,33 @@ mod tests {
         trigger: true,
     };
 
+    /// Records reported presses.
+    #[derive(Clone, Default)]
+    struct Reporter(Rc<RefCell<Vec<Button>>>);
+
+    impl PressReporter for Reporter {
+        fn report(&mut self, button: Button) {
+            self.0.borrow_mut().push(button);
+        }
+    }
+
+    /// Records the sequence of LED state changes.
+    #[derive(Clone, Default)]
+    struct Led(Rc<RefCell<Vec<bool>>>);
+
+    impl PressFeedback for Led {
+        fn set_led(&mut self, on: bool) {
+            self.0.borrow_mut().push(on);
+        }
+    }
+
     struct Harness {
         comics: Comics,
         screen: Screen,
         buttons: Buttons,
         clock: FakeClock,
+        reports: Reporter,
+        led: Led,
     }
 
     impl Harness {
@@ -371,18 +425,22 @@ mod tests {
                 screen: Screen::default(),
                 buttons: Buttons::default(),
                 clock: FakeClock::default(),
+                reports: Reporter::default(),
+                led: Led::default(),
             }
         }
 
         fn viewer<'f>(
             &self,
             frame: &'f mut Frame,
-        ) -> ComicViewer<'f, Comics, Screen, Buttons, FakeClock> {
+        ) -> ComicViewer<'f, Comics, Screen, Buttons, FakeClock, Reporter, Led> {
             ComicViewer::new(
                 self.comics.clone(),
                 self.screen.clone(),
                 self.buttons.clone(),
                 self.clock.clone(),
+                self.reports.clone(),
+                self.led.clone(),
                 frame,
                 ViewerConfig::default(),
             )
@@ -681,5 +739,63 @@ mod tests {
         viewer.tick();
         assert_eq!(h.server().polls, 2);
         assert_eq!(h.shown(), [5, 4]);
+    }
+
+    #[test]
+    fn every_dispatched_press_reports() {
+        let h = Harness::new(Some(5));
+        let mut buf = frame();
+        let mut viewer = h.viewer(&mut buf);
+        viewer.tick();
+        h.buttons.tap(FORWARD);
+        viewer.tick();
+        h.buttons.tap(BACK);
+        viewer.tick();
+        h.buttons.tap(TRIGGER);
+        viewer.tick();
+        assert_eq!(
+            *h.reports.0.borrow(),
+            vec![Button::Forward, Button::Back, Button::Trigger]
+        );
+    }
+
+    #[test]
+    fn the_press_is_reported_even_when_the_action_fails() {
+        let h = Harness::new(Some(5));
+        let mut buf = frame();
+        let mut viewer = h.viewer(&mut buf);
+        viewer.tick();
+        h.server().offline = true; // the trigger request and fetches will fail
+        h.buttons.tap(TRIGGER);
+        viewer.tick();
+        assert_eq!(
+            *h.reports.0.borrow(),
+            vec![Button::Trigger],
+            "reported as observed, before the failed trigger"
+        );
+    }
+
+    #[test]
+    fn the_led_blinks_for_the_press_dwell() {
+        let h = Harness::new(Some(5));
+        let mut buf = frame();
+        let mut viewer = h.viewer(&mut buf);
+        viewer.tick();
+        assert!(
+            h.led.0.borrow().is_empty(),
+            "no LED activity without a press"
+        );
+        h.buttons.tap(BACK);
+        viewer.tick(); // the press lights the LED
+        assert_eq!(*h.led.0.borrow(), [true]);
+        h.clock.advance(Duration::from_millis(50));
+        viewer.tick();
+        assert_eq!(*h.led.0.borrow(), [true], "still on inside the dwell");
+        h.clock.advance(Duration::from_millis(100));
+        viewer.tick();
+        assert_eq!(*h.led.0.borrow(), [true, false], "off at dwell end");
+        h.clock.advance(Duration::from_secs(60));
+        viewer.tick();
+        assert_eq!(*h.led.0.borrow(), [true, false], "stays off");
     }
 }

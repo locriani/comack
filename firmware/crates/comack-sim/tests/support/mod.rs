@@ -22,6 +22,8 @@ pub struct State {
     /// Publish and reveal a new issue whenever the trigger is posted.
     pub reveal_on_trigger: bool,
     pub requests: Vec<String>,
+    /// Bodies of the `POST /api/device/buttons` press reports.
+    pub button_reports: Vec<String>,
 
     pub ws_sessions: u32,
     /// Concatenated binary payloads received on `/ws/audio`.
@@ -96,6 +98,21 @@ fn read_head(conn: &mut TcpStream) -> Option<String> {
     String::from_utf8(head).ok()
 }
 
+/// The request body announced by `head`'s content-length, read from `conn`.
+fn read_body(conn: &mut TcpStream, head: &str) -> String {
+    let len = head
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.split(':').nth(1))
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = vec![0u8; len];
+    if len > 0 {
+        let _ = conn.read_exact(&mut body);
+    }
+    String::from_utf8_lossy(&body).into_owned()
+}
+
 fn respond(conn: &mut TcpStream, status: &str, body: &[u8]) {
     let head = format!(
         "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
@@ -146,6 +163,11 @@ fn handle(mut conn: TcpStream, state: &Mutex<State>) {
             }
             drop(s);
             respond(&mut conn, "200 OK", br#"{"status":"ok"}"#);
+        }
+        ("POST", "/api/device/buttons") => {
+            let body = read_body(&mut conn, &head);
+            state.lock().unwrap().button_reports.push(body);
+            respond(&mut conn, "200 OK", br#"{"ok":true}"#);
         }
         ("GET", p) if p.starts_with("/api/comics/") && p.ends_with("/bin") => {
             let n: Option<u32> = p["/api/comics/".len()..p.len() - "/bin".len()].parse().ok();

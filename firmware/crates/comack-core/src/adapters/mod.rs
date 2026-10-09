@@ -13,7 +13,7 @@ pub mod websocket;
 #[cfg(test)]
 pub(crate) mod testing;
 
-pub use buttons::ActiveLowButtons;
+pub use buttons::{ActiveLowButtons, PressLatch};
 pub use comic_service::{ComicApiError, HttpComicService};
 pub use epd::{Epd7in5, EpdError};
 pub use http::{HttpClient, HttpConfig, HttpError, HttpResponse, Method};

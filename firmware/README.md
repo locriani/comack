@@ -163,12 +163,17 @@ flag surface mirrors the manual flow documented above.
 | PDM mic CLK / DIN / power enable | 42 / 41 / 38 |
 | E-paper SCK / MOSI / CS / DC / RST / BUSY (active low) | 7 / 9 / 10 / 11 / 12 / 13 |
 | Buttons: forward (right white) / back (left white) / trigger (green), active low | 4 / 5 / 3 |
+| Onboard LED, active low (LOW = on) | 6 |
 
 ## Behaviour compared with the C++ firmware
 
 The port keeps the C++ firmware's timings: poll every 10 s, re-poll 2 s after a trigger while a new comic generates, snap back after 60 s of browsing, sample buttons every 50 ms, send 100 ms audio chunks, report every 50 chunks, and back off 2 s on reconnect. It also keeps the proven e-paper init sequence and the Wi-Fi rotation. These things changed on purpose:
 
 - **The trigger fetches and shows on the press itself.** The C++ firmware waited for the 2 s re-poll; now a successful trigger POST polls, downloads and shows on the same tick. The 2 s cadence remains as catch-up while the server generates, until one cycle past the normal poll interval.
+
+- **Every press reports to the server and lights the onboard LED.** Each dispatched press POSTs `/api/device/buttons` with `{"button": "forward" | "back" | "trigger"}` before the viewer acts on it — the dashboard flashes a matching chip — and the GPIO 6 LED stays lit for 150 ms. Reporting never blocks navigation: transport errors and non-2xx replies are logged and dropped.
+
+- **Presses are latched across blocking work.** The e-paper refresh and comic downloads block the main loop, and the C++ firmware sampled the buttons only between those windows; a press fully contained in one was lost. Falling-edge GPIO interrupts now latch such presses and the next 50 ms sample dispatches exactly one edge per latched press.
 
 - **HTTP status codes are checked.** A 404 from `/api/comics/current` means "nothing revealed yet". A frame only counts if the status is 200 and exactly 48 000 bytes arrive.
 - **The peak meter handles `i16::MIN` (−32768).** In C, negating it overflowed.

@@ -1,12 +1,20 @@
 //! [`ComicSource`] and [`ComicTrigger`] over the Comack server's HTTP API.
 
+use core::fmt::Write as _;
 use core::net::Ipv4Addr;
 
+use log::warn;
+
+use super::buf::SliceWriter;
 use super::http::{HttpClient, HttpError, Method};
 use super::json::parse_issue_number;
 use super::net::TcpConnector;
-use crate::application::ports::{ComicSource, ComicTrigger};
-use crate::domain::{Frame, Issue, FRAME_BYTES};
+use crate::application::ports::{ComicSource, ComicTrigger, PressReporter};
+use crate::domain::{Button, Frame, Issue, FRAME_BYTES};
+
+/// Where the device reports button presses; tokenless like the comic read
+/// routes, because the device carries no token (`server/auth.py`).
+const BUTTONS_PATH: &str = "/api/device/buttons";
 
 /// Why a comic API call failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +98,31 @@ impl<C: TcpConnector> ComicTrigger for HttpComicService<'_, C> {
             Ok(())
         } else {
             Err(ComicApiError::Status(resp.status))
+        }
+    }
+}
+
+impl<C: TcpConnector> PressReporter for HttpComicService<'_, C> {
+    fn report(&mut self, button: Button) {
+        let mut body = [0u8; 24];
+        let mut writer = SliceWriter::new(&mut body);
+        // Fixed sizes: the writer can only overflow on a bug, and even then
+        // the report is fire-and-forget.
+        if write!(writer, r#"{{"button":"{}"}}"#, button.as_str()).is_err() {
+            warn!("Button report: body did not fit");
+            return;
+        }
+        let mut ignored = [0u8; 0];
+        match self.http.request_with_body(
+            self.server,
+            Method::Post,
+            BUTTONS_PATH,
+            writer.written(),
+            &mut ignored,
+        ) {
+            Ok(resp) if resp.is_success() => {}
+            Ok(resp) => warn!("Button report rejected: status {}", resp.status),
+            Err(e) => warn!("Button report failed: {e:?}"),
         }
     }
 }
@@ -190,5 +223,43 @@ mod tests {
             service(reply("503 Busy", b"")).trigger(),
             Err(ComicApiError::Status(503))
         );
+    }
+
+    fn sent_body(c: &ScriptedConnector) -> Vec<u8> {
+        let sent = c.sent();
+        let header_end = sent
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("request has headers")
+            + 4;
+        sent[header_end..].to_vec()
+    }
+
+    #[test]
+    fn report_posts_the_button_name() {
+        let cases = [
+            (Button::Forward, br#"{"button":"forward"}"#.as_slice()),
+            (Button::Back, br#"{"button":"back"}"#.as_slice()),
+            (Button::Trigger, br#"{"button":"trigger"}"#.as_slice()),
+        ];
+        for (button, expected) in cases {
+            let c = reply("200 OK", b"");
+            service(c.clone()).report(button);
+            assert_eq!(
+                request_line(&c),
+                b"POST /api/device/buttons HTTP/1.1".as_slice()
+            );
+            assert_eq!(sent_body(&c), expected);
+        }
+    }
+
+    #[test]
+    fn a_failed_report_is_a_noop() {
+        // Transport error: must not panic or retry.
+        let down = ScriptedConnector::default();
+        down.0.borrow_mut().refuse_connect = true;
+        service(down).report(Button::Back);
+        // Non-2xx: logged and dropped.
+        service(reply("500 Boom", b"")).report(Button::Back);
     }
 }

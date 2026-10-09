@@ -18,7 +18,7 @@ use comack_core::application::{AudioStreamer, ComicViewer, StreamerConfig, Viewe
 use comack_core::config::{self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE_HZ, AUDIO_WS_PATH};
 use comack_core::domain::FRAME_BYTES;
 use comack_sim::{
-    PbmDisplay, StdClock, StdConnector, StdinButtons, SyntheticMicrophone, SystemResolver,
+    LogLed, PbmDisplay, StdClock, StdConnector, StdinButtons, SyntheticMicrophone, SystemResolver,
 };
 use log::{info, LevelFilter, Log, Metadata, Record};
 
@@ -139,6 +139,8 @@ fn main() -> ExitCode {
         PbmDisplay::new(options.out),
         StdinButtons::spawn(),
         StdClock::new(),
+        comics, // presses are reported to the server like on the device
+        LogLed,
         &mut frame,
         ViewerConfig::default(),
     );

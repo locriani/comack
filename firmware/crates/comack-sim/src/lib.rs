@@ -5,11 +5,13 @@
 pub mod buttons;
 pub mod clock;
 pub mod display;
+pub mod led;
 pub mod microphone;
 pub mod net;
 
 pub use buttons::{ScriptedButtons, StdinButtons};
 pub use clock::StdClock;
 pub use display::PbmDisplay;
+pub use led::LogLed;
 pub use microphone::SyntheticMicrophone;
 pub use net::{StdConnector, StdStream, SystemResolver};

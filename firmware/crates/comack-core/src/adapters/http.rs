@@ -15,7 +15,7 @@ use super::net::{NetError, TcpConnector, TcpStream};
 pub enum Method {
     /// `GET`
     Get,
-    /// `POST` with an empty body.
+    /// `POST`; the body, if any, is supplied per request.
     Post,
 }
 
@@ -78,7 +78,8 @@ impl Default for HttpConfig {
 /// Size of the buffer requests are formatted into.
 pub const MAX_REQUEST_LEN: usize = 192;
 
-/// Format a bodiless request with `Connection: close` into `out`.
+/// Format a request with `Connection: close` and `payload` as its body into
+/// `out`.
 ///
 /// # Errors
 /// [`HttpError::RequestTooLarge`] if it does not fit.
@@ -88,15 +89,22 @@ pub fn write_request(
     path: impl fmt::Display,
     host: &str,
     port: u16,
+    payload: &[u8],
 ) -> Result<usize, HttpError> {
     let mut w = SliceWriter::new(out);
     write!(
         w,
-        "{} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        method.as_str()
+        "{} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        method.as_str(),
+        payload.len()
     )
     .map_err(|_| HttpError::RequestTooLarge)?;
-    Ok(w.len())
+    let head = w.len();
+    let end = head + payload.len();
+    out.get_mut(head..end)
+        .ok_or(HttpError::RequestTooLarge)?
+        .copy_from_slice(payload);
+    Ok(end)
 }
 
 /// Incremental response parser: extracts the status code and finds where the
@@ -208,8 +216,23 @@ impl<'a, C: TcpConnector> HttpClient<'a, C> {
         path: impl fmt::Display,
         body: &mut [u8],
     ) -> Result<HttpResponse, HttpError> {
+        self.request_with_body(ip, method, path, &[], body)
+    }
+
+    /// Like [`Self::request`], sending `payload` as the request body.
+    ///
+    /// # Errors
+    /// See [`HttpError`].
+    pub fn request_with_body(
+        &self,
+        ip: Ipv4Addr,
+        method: Method,
+        path: impl fmt::Display,
+        payload: &[u8],
+        body: &mut [u8],
+    ) -> Result<HttpResponse, HttpError> {
         let mut request = [0u8; MAX_REQUEST_LEN];
-        let request_len = write_request(&mut request, method, path, self.host, self.port)?;
+        let request_len = write_request(&mut request, method, path, self.host, self.port, payload)?;
 
         let mut stream = self
             .connector
@@ -257,7 +280,15 @@ mod tests {
     #[test]
     fn formats_a_bodiless_request() {
         let mut buf = [0u8; MAX_REQUEST_LEN];
-        let n = write_request(&mut buf, Method::Post, "/api/trigger", "comack-server", 8000).unwrap();
+        let n = write_request(
+            &mut buf,
+            Method::Post,
+            "/api/trigger",
+            "comack-server",
+            8000,
+            b"",
+        )
+        .unwrap();
         assert_eq!(
             &buf[..n],
             b"POST /api/trigger HTTP/1.1\r\nHost: comack-server:8000\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -268,7 +299,7 @@ mod tests {
     fn rejects_requests_that_do_not_fit() {
         let mut buf = [0u8; 16];
         assert_eq!(
-            write_request(&mut buf, Method::Get, "/a/very/long/path", "h", 1),
+            write_request(&mut buf, Method::Get, "/a/very/long/path", "h", 1, b""),
             Err(HttpError::RequestTooLarge)
         );
     }

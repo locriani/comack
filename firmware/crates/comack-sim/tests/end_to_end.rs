@@ -20,7 +20,7 @@ use comack_core::application::ports::{
 };
 use comack_core::application::{AudioStreamer, ComicViewer, StreamerConfig, ViewerConfig};
 use comack_core::domain::{ButtonLevels, Frame, Instant, Issue, FRAME_BYTES};
-use comack_sim::{ScriptedButtons, StdConnector, SyntheticMicrophone};
+use comack_sim::{LogLed, ScriptedButtons, StdConnector, SyntheticMicrophone};
 use support::{frame_for, FakeServer};
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -147,6 +147,8 @@ fn viewer_follows_the_server_and_the_buttons() {
         screen.clone(),
         buttons.clone(),
         clock.clone(),
+        service(&server),
+        LogLed,
         &mut frame,
         ViewerConfig::default(),
     );
@@ -187,6 +189,16 @@ fn viewer_follows_the_server_and_the_buttons() {
         *screen.0.borrow(),
         [5, 4, 2, 4, 5, 6],
         "triggered comic shown on the trigger tick"
+    );
+    assert_eq!(
+        server.state().button_reports,
+        [
+            r#"{"button":"back"}"#,
+            r#"{"button":"back"}"#,
+            r#"{"button":"forward"}"#,
+            r#"{"button":"trigger"}"#,
+        ],
+        "one press report per dispatched press, in press order"
     );
     clock.advance(Duration::from_secs(2));
     viewer.tick();

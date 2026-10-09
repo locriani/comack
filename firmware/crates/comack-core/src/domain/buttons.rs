@@ -2,6 +2,38 @@
 
 use super::issue::Direction;
 
+/// A front-panel button, named the way the device reports it to the server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Button {
+    /// Right white button: next comic.
+    Forward,
+    /// Left white button: previous comic.
+    Back,
+    /// Green button: same as saying the trigger phrase.
+    Trigger,
+}
+
+impl Button {
+    /// The wire name in the press report body. The dashboard maps `trigger`
+    /// back to the owner's word for the button: "GREEN".
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Forward => "forward",
+            Self::Back => "back",
+            Self::Trigger => "trigger",
+        }
+    }
+}
+
+impl From<Direction> for Button {
+    fn from(direction: Direction) -> Self {
+        match direction {
+            Direction::Forward => Self::Forward,
+            Direction::Back => Self::Back,
+        }
+    }
+}
+
 /// Instantaneous button state; `true` means held down.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ButtonLevels {

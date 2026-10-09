@@ -153,6 +153,10 @@ The device connects *out* to the server; check the server side first:
    of this page).
 6. **Firmware-side causes** (flashing, WiFi credentials, button wiring) are
    covered in [firmware/README.md](../firmware/README.md).
+7. **No LED blink on press.** The onboard LED (GPIO 6, active low) lights for
+   150 ms per press. If it never lights, check the board revision pinout —
+   LED wiring has varied across revisions; the blink is cosmetic and nothing
+   else depends on it.
 
 ## Capturing traffic (tcpdump on the server, Wireshark on your desktop)
 
