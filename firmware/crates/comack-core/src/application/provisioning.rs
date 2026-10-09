@@ -185,7 +185,7 @@ mod tests {
         Submission {
             ssid: "home",
             password: "hunter2",
-            server_address: "comack-server:8000",
+            server_address: "yourserver:8000",
             device_name: "kitchen-display",
             tailscale_auth_key: "tskey-auth-sample",
         }
@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(config.networks.len(), 1);
         assert_eq!(config.networks[0].ssid.as_str(), "home");
         assert_eq!(config.networks[0].password.as_str(), "hunter2");
-        assert_eq!(config.server_host.as_str(), "comack-server");
+        assert_eq!(config.server_host.as_str(), "yourserver");
         assert_eq!(config.server_port, 8000);
         assert_eq!(config.device_name.as_str(), "kitchen-display");
         assert_eq!(config.tailscale_auth_key.as_str(), "tskey-auth-sample");
@@ -217,11 +217,11 @@ mod tests {
     #[test]
     fn a_portless_address_keeps_the_default_port() {
         let submission = Submission {
-            server_address: "comack-server",
+            server_address: "yourserver",
             ..submission()
         };
         let config = build_config(&submission).unwrap();
-        assert_eq!(config.server_host.as_str(), "comack-server");
+        assert_eq!(config.server_host.as_str(), "yourserver");
         assert_eq!(config.server_port, config::SERVER.port);
     }
 
@@ -326,10 +326,10 @@ mod tests {
     #[test]
     fn malformed_addresses_are_rejected() {
         for address in [
-            "comack-server:",      // port missing
-            "comack-server:0",     // port zero
-            "comack-server:abc",   // port not a number
-            "comack-server:99999", // port over u16
+            "yourserver:",      // port missing
+            "yourserver:0",     // port zero
+            "yourserver:abc",   // port not a number
+            "yourserver:99999", // port over u16
             "::1",              // IPv6 is not supported
             "host:8000:9000",   // too many colons
         ] {

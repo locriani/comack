@@ -1,0 +1,23 @@
+name: hygiene
+
+# The repo-hygiene guard protects the whole tree, so it must run on every
+# change: path filters are how a firmware-only PR silently reintroduced the
+# banned hostname while the server workflow never noticed.
+on:
+  push:
+  pull_request:
+
+jobs:
+  guard:
+    name: Banned-hostname scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pytest
+        # The guard module is stdlib-only apart from pytest itself.
+        run: pip install pytest
+      - name: Repo-hygiene guard
+        run: pytest tests/test_repo_hygiene.py -q

@@ -98,7 +98,7 @@ rejection!(
 rejection!(
     REJECT_SERVER_INVALID,
     "<h1>Couldn't save</h1><p>The server address must be a hostname or an \
-     ip:port, for example <code>comack-server:8000</code> or \
+     ip:port, for example <code>your-server:8000</code> or \
      <code>192.168.1.20:8000</code>. <a href='/'>Try again</a>.</p>"
 );
 rejection!(
@@ -275,7 +275,7 @@ mod tests {
 
     /// A valid urlencoded body in the form's shape.
     fn valid_body() -> String {
-        "ssid=home&password=hunter2&server=comack-server%3A8000&device_name=kitchen".to_string()
+        "ssid=home&password=hunter2&server=yourserver%3A8000&device_name=kitchen".to_string()
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod tests {
         let fields = decode_form(valid_body().as_bytes()).unwrap();
         assert_eq!(fields.ssid.as_str(), "home");
         assert_eq!(fields.password.as_str(), "hunter2");
-        assert_eq!(fields.server.as_str(), "comack-server:8000");
+        assert_eq!(fields.server.as_str(), "yourserver:8000");
         assert_eq!(fields.device_name.as_str(), "kitchen");
         assert_eq!(fields.tailscale_key.as_str(), "");
     }
@@ -291,18 +291,18 @@ mod tests {
     #[test]
     fn plus_means_space_and_percent_escapes_decode_bytewise() {
         let fields =
-            decode_form(b"ssid=my%20network&password=p%2B%40ss%26w%C3%BCrd&server=comack-server")
+            decode_form(b"ssid=my%20network&password=p%2B%40ss%26w%C3%BCrd&server=yourserver")
                 .unwrap();
         assert_eq!(fields.ssid.as_str(), "my network");
         assert_eq!(fields.password.as_str(), "p+@ss&wü\u{0072}d");
-        assert_eq!(fields.server.as_str(), "comack-server");
+        assert_eq!(fields.server.as_str(), "yourserver");
     }
 
     #[test]
     fn unknown_keys_are_ignored_and_blank_pairs_skipped() {
-        let fields = decode_form(b"&future=1&ssid=home&&server=comack-server&").unwrap();
+        let fields = decode_form(b"&future=1&ssid=home&&server=yourserver&").unwrap();
         assert_eq!(fields.ssid.as_str(), "home");
-        assert_eq!(fields.server.as_str(), "comack-server");
+        assert_eq!(fields.server.as_str(), "yourserver");
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
         let mut store = InMemoryConfigStore::default();
 
         // No SSID.
-        let (status, body) = route(&mut store, Method::Post, "/submit", b"server=comack-server");
+        let (status, body) = route(&mut store, Method::Post, "/submit", b"server=yourserver");
         assert_eq!(status, 400);
         assert!(body.contains("required"));
         assert_eq!(store.load().unwrap(), None);
@@ -353,7 +353,7 @@ mod tests {
             &mut store,
             Method::Post,
             "/submit",
-            b"ssid=home&server=comack-server%3Aabc",
+            b"ssid=home&server=yourserver%3Aabc",
         );
         assert_eq!(status, 400);
         assert_eq!(store.load().unwrap(), None);
@@ -363,7 +363,7 @@ mod tests {
     fn over_long_values_are_named_by_the_use_case_not_the_decoder() {
         let mut store = InMemoryConfigStore::default();
         let long_ssid = "x".repeat(SSID_MAX_LEN + 1);
-        let body = format!("ssid={long_ssid}&server=comack-server");
+        let body = format!("ssid={long_ssid}&server=yourserver");
         let (status, body) = route(&mut store, Method::Post, "/submit", body.as_bytes());
         assert_eq!(status, 400);
         assert!(body.contains("too long"), "{body}");

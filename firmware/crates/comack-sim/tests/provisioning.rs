@@ -124,10 +124,10 @@ fn invalid_submissions_are_rejected_before_any_save() {
     let portal = ProvisioningServer::start(store.clone());
 
     for body in [
-        "server=comack-server".to_string(),                 // no SSID
+        "server=yourserver".to_string(),                 // no SSID
         "ssid=home".to_string(),                         // no server address
-        "ssid=home&server=comack-server%3Aabc".to_string(), // port not a number
-        format!("ssid={}&server=comack-server", "x".repeat(SSID_MAX_LEN + 1)), // SSID too long
+        "ssid=home&server=yourserver%3Aabc".to_string(), // port not a number
+        format!("ssid={}&server=yourserver", "x".repeat(SSID_MAX_LEN + 1)), // SSID too long
     ] {
         let (status, response) = submit(portal.port, &body);
         assert_eq!(status, 400, "body {body:?} should be rejected: {response}");
@@ -145,9 +145,9 @@ fn a_new_submission_replaces_the_stored_config() {
     let store = Arc::new(Mutex::new(InMemoryConfigStore::default()));
     let portal = ProvisioningServer::start(store.clone());
 
-    let (status, _) = submit(portal.port, "ssid=old-network&server=comack-server");
+    let (status, _) = submit(portal.port, "ssid=old-network&server=yourserver");
     assert_eq!(status, 200);
-    let (status, _) = submit(portal.port, "ssid=new-network&server=comack-server%3A9000");
+    let (status, _) = submit(portal.port, "ssid=new-network&server=yourserver%3A9000");
     assert_eq!(status, 200);
 
     let config = store.lock().unwrap().load().unwrap().expect("config saved");
