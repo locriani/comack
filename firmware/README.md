@@ -84,6 +84,78 @@ cargo run --release                        # builds ESP-IDF v5.5.5 on first run,
 
 `esp-idf-sys` builds the vendored C components in `components/`. It also generates Rust bindings for `microlink.h` as `esp_idf_svc::sys::microlink`.
 
+## Provisioning a device
+
+The first flash always needs USB. What differs after that is who collects the
+settings — the same fields (Wi-Fi SSID and password, server address, device
+name, optional Tailscale auth key) feed either path:
+
+- **On-device portal** (primary; ships with the on-device provisioning-portal
+  work): the device broadcasts a `comack-setup` Wi-Fi network, you join it from
+  a phone or laptop, and the device stores everything on-chip. Network changes
+  later need no cable — hold the setup button to reopen the portal.
+- **`scripts/provision-device.sh`** (assisted first flash): since the first
+  flash needs a cable anyway, this script collects the same fields at the
+  computer and drives the build-and-flash in one step.
+
+The script renders `firmware/esp/src/secrets.rs` from the checked-in
+`secrets.rs.example` — the compile-time fallback the firmware boots with until
+a runtime-stored config exists — then runs the same `cargo build --release`
+and `espflash flash` as the manual flow above. Run it from the repo root:
+
+```sh
+./scripts/provision-device.sh                             # interactive prompts
+./scripts/provision-device.sh --ssid HomeNet --password '…' --yes
+./scripts/provision-device.sh --help                      # all flags
+```
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--ssid`, `--password` | Wi-Fi credentials for the device | prompted (password input hidden) |
+| `--server` | server hostname or `ip:port` | `comack-server:8000` |
+| `--name` | device name | `comack-display` |
+| `--tskey` | Tailscale auth key (`tskey-auth-…`) | empty — placeholder kept |
+| `--port` | serial device for flashing or monitor | auto-detected by espflash |
+| `--yes` | never prompt (for scripted use) | — |
+| `--no-secrets` | leave `secrets.rs` untouched; build and flash it as-is | — |
+| `--no-flash` | render and build only | — |
+| `--force` | build and flash even when nothing changed | — |
+| `--force-secrets` | overwrite a differing, hand-edited `secrets.rs` | — |
+| `--monitor` | attach `espflash monitor` instead of flashing on a no-op run | — |
+
+Behaviour worth knowing:
+
+- **Idempotent.** After a successful flash the script records what it flashed
+  in `firmware/esp/.provision-state` (hashes only — no secrets, and
+  gitignored). Rerunning with the same values is a no-op; `--force` re-flashes.
+- **Hand edits are protected.** If `secrets.rs` exists and differs from both
+  the rendered output and the last scripted flash, the script asks before
+  overwriting — and refuses when `--yes` suppresses prompts. Override with
+  `--force-secrets`, or flash a hand-edited `secrets.rs` as-is with
+  `--no-secrets`.
+- **Values are Rust-escaped.** Quotes and backslashes render correctly; the
+  rendered file is written `0600` and `secrets.rs` is gitignored.
+- **Inputs are validated.** SSIDs over 32 characters (the 802.11 limit) and
+  server values that are not `host[:port]` or a bare IP are rejected before
+  anything is written. A short Wi-Fi password or a key that does not start
+  with `tskey-auth-` warns but proceeds.
+
+Two values stay compile-time constants in
+`firmware/crates/comack-core/src/config.rs` — `SERVER` and `DEVICE_NAME`. The
+script warns when your `--server`/`--name` differ from those defaults; edit
+the file before flashing to actually change them. (The runtime config store
+planned alongside the portal moves both on-chip.) Leaving `--tskey` empty
+keeps the placeholder: the device will not join a tailnet, and since `SERVER`
+resolves via MagicDNS it will not reach the server by name either — point
+`SERVER` at a literal IP for a tailnet-less LAN setup.
+
+Verification notes: executed here — `bash -n` and `shellcheck` clean, plus a
+stubbed-toolchain functional suite covering rendering and escaping, no-op
+reruns, `--force`, overwrite protection, validation, the exact `espflash`
+arguments, and interactive prompts (via pty). Not executed here — a real
+ESP-IDF build and device flash need the Xtensa toolchain and hardware; the
+flag surface mirrors the manual flow documented above.
+
 ## Board wiring
 
 | Function | GPIO |

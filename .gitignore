@@ -14,6 +14,7 @@ firmware/target/
 firmware/esp/target/
 firmware/esp/.embuild/
 firmware/esp/src/secrets.rs
+firmware/esp/.provision-state
 firmware/esp/sdkconfig
 data/comics/
 comack.service.rendered
