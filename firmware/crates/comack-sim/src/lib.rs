@@ -8,6 +8,7 @@ pub mod display;
 pub mod led;
 pub mod microphone;
 pub mod net;
+pub mod portal;
 
 pub use buttons::{ScriptedButtons, StdinButtons};
 pub use clock::StdClock;
@@ -15,3 +16,4 @@ pub use display::PbmDisplay;
 pub use led::LogLed;
 pub use microphone::SyntheticMicrophone;
 pub use net::{StdConnector, StdStream, SystemResolver};
+pub use portal::ProvisioningServer;

@@ -12,6 +12,8 @@ use comack_core::adapters::{ActiveLowButtons, PressLatch};
 use comack_core::application::ports::ButtonInput;
 use comack_core::domain::ButtonLevels;
 
+use crate::setup_button::SetupHold;
+
 /// One button pin: samples the level and re-arms the edge interrupt.
 ///
 /// The HAL erases the pin model (`PinDriver<'d, MODE>` keeps only the mode),
@@ -22,6 +24,10 @@ struct InterruptiblePin<'d> {
     pin: PinDriver<'d, EspInputMode>,
     latch: Arc<PressLatch>,
     index: usize,
+    /// Only the setup-designated pin carries this: every level sample
+    /// feeds the hold detector, so a 3 s hold trips it wherever the
+    /// viewer is in its loop.
+    hold: Option<Arc<SetupHold>>,
 }
 
 impl<'d> InterruptiblePin<'d> {
@@ -58,6 +64,9 @@ impl InputPin for InterruptiblePin<'_> {
         if let Err(e) = self.pin.enable_interrupt() {
             warn!("Button rearm: {e}");
         }
+        if let Some(hold) = &self.hold {
+            hold.sample(pressed);
+        }
         Ok(pressed)
     }
 }
@@ -72,26 +81,32 @@ pub struct InterruptButtons<'d> {
 
 impl<'d> InterruptButtons<'d> {
     /// Wrap the three configured input pins and arm their interrupts.
+    /// `setup_hold` watches the setup-designated pin (the back button, per
+    /// [`crate::setup_button`]); every tick feeds it a level sample.
     pub fn new(
         latch: Arc<PressLatch>,
         forward: PinDriver<'d, EspInputMode>,
         back: PinDriver<'d, EspInputMode>,
         trigger: PinDriver<'d, EspInputMode>,
+        setup_hold: Arc<SetupHold>,
     ) -> Result<Self, EspError> {
         let mut forward = InterruptiblePin {
             pin: forward,
             latch: Arc::clone(&latch),
             index: PressLatch::FORWARD,
+            hold: None,
         };
         let mut back = InterruptiblePin {
             pin: back,
             latch: Arc::clone(&latch),
             index: PressLatch::BACK,
+            hold: Some(setup_hold),
         };
         let mut trigger = InterruptiblePin {
             pin: trigger,
             latch: Arc::clone(&latch),
             index: PressLatch::TRIGGER,
+            hold: None,
         };
         forward.arm()?;
         back.arm()?;

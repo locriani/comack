@@ -10,7 +10,33 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use comack_core::domain::FRAME_BYTES;
+use comack_core::application::ports::DeviceConfigStore;
+use comack_core::domain::{DeviceConfig, FRAME_BYTES};
+
+/// In-memory [`DeviceConfigStore`] double for portal tests: keeps the last
+/// saved configuration, nothing touches hardware.
+#[derive(Debug, Default)]
+pub struct InMemoryConfigStore {
+    config: Option<DeviceConfig>,
+}
+
+impl DeviceConfigStore for InMemoryConfigStore {
+    type Error = core::convert::Infallible;
+
+    fn load(&self) -> Result<Option<DeviceConfig>, Self::Error> {
+        Ok(self.config.clone())
+    }
+
+    fn save(&mut self, config: &DeviceConfig) -> Result<(), Self::Error> {
+        self.config = Some(config.clone());
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<(), Self::Error> {
+        self.config = None;
+        Ok(())
+    }
+}
 
 #[derive(Default)]
 pub struct State {

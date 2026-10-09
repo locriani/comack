@@ -86,21 +86,77 @@ cargo run --release                        # builds ESP-IDF v5.5.5 on first run,
 
 ## Provisioning a device
 
-The first flash always needs USB. What differs after that is who collects the
-settings — the same fields (Wi-Fi SSID and password, server address, device
-name, optional Tailscale auth key) feed either path:
+The first flash always needs USB. After that, the settings live on the device
+and the portal changes them with nothing but a phone. The same fields
+(Wi-Fi SSID and password, server address, device name, optional Tailscale
+auth key) feed every path:
 
-- **On-device portal** (primary; ships with the on-device provisioning-portal
-  work): the device broadcasts a `comack-setup` Wi-Fi network, you join it from
-  a phone or laptop, and the device stores everything on-chip. Network changes
-  later need no cable — hold the setup button to reopen the portal.
+- **On-device portal** (primary): whenever the device has no stored
+  configuration and no usable compile-time fallback — or you hold the setup
+  button for 3 seconds — it broadcasts a `comack-setup` Wi-Fi network, draws
+  instructions on the e-paper, and stores everything on-chip when you save.
+  Network changes later need no cable.
 - **`scripts/provision-device.sh`** (assisted first flash): since the first
   flash needs a cable anyway, this script collects the same fields at the
-  computer and drives the build-and-flash in one step.
+  computer and drives the build-and-flash in one step. It renders
+  `firmware/esp/src/secrets.rs` — the compile-time **fallback** the firmware
+  boots with until a runtime-stored config exists.
+
+### The on-device portal
+
+When the portal runs, the e-paper shows the steps: join the Wi-Fi network
+`comack-setup`, then open <http://192.168.4.1> in a phone or laptop browser.
+The page collects:
+
+| Field | Meaning | Validation before anything is saved |
+|---|---|---|
+| Wi-Fi SSID | your home network, ≤ 32 characters (802.11 limit) | non-empty, bounded |
+| Wi-Fi password | WPA2 passphrase, ≤ 64 characters | bounded |
+| Server address | hostname or `ip:port` (`:port` optional, default 8000) | non-empty, bounded; the form never echoes stored secrets back |
+| Device name | shown on the server's dashboard | blank uses the default `comack-display` |
+| Tailscale auth key | optional, `tskey-auth-…` | **empty is legitimate**: the device runs LAN-only (no tailnet); the server must then be reachable on the same network by DNS name or literal IP |
+
+On save the firmware validates, writes the on-chip NVS store, closes the
+`comack-setup` network, and joins your Wi-Fi; the e-paper shows the connecting
+steps and, if the server cannot be reached, a screen that names the retry
+loop. Rejected submissions save nothing — the config is never left half-set
+— and the portal stays up for a corrected entry.
+
+**The setup button is the left (back) button, GPIO 5.** Holding it for 3
+seconds from any state — including normal operation — restarts the device
+into the portal (keep holding through the brief reboot; the boot checks the
+same hold). The instructions and error screens name it.
+
+MicroLink initialises from the stored key when one is set; with an empty key
+the device never joins a tailnet and talks plain LAN TCP to the server. The
+portal is comack-owned end to end: the vendored MicroLink config UI stays
+compiled out (it is unreachable before Wi-Fi exists and manages the wrong
+Wi-Fi list), and MicroLink keeps doing tailnet transport only.
+
+### Manual hardware checklist
+
+What follows is **not automatable in this repo** — there is no QEMU or
+on-target test rig, so these checks are the owner's, on hardware:
+
+1. **Fresh device:** flash with no stored config and an empty
+   `secrets.rs` network list → the device boots into the portal and the
+   e-paper shows the join instructions.
+2. **Phone join:** join `comack-setup`, open `http://192.168.4.1`, fill the
+   form, save → the device leaves AP mode, joins the home Wi-Fi and comes
+   online on the dashboard.
+3. **Network change without a cable:** hold the left (back) button 3 s →
+   the portal returns; join it and enter the new network → the device
+   reconnects, still with no cable.
+4. **Server-down error screen:** with the device running, stop the server →
+   after a connect failure the e-paper shows the unreachable screen naming
+   the retry loop; start the server again → the device recovers on its own.
+5. **LAN-only mode:** save the form with an empty Tailscale key → the device
+   never joins a tailnet and reaches the server over the LAN.
+
+### The assisted-flash script
 
 The script renders `firmware/esp/src/secrets.rs` from the checked-in
-`secrets.rs.example` — the compile-time fallback the firmware boots with until
-a runtime-stored config exists — then runs the same `cargo build --release`
+`secrets.rs.example`, then runs the same `cargo build --release`
 and `espflash flash` as the manual flow above. Run it from the repo root:
 
 ```sh
@@ -144,8 +200,10 @@ Two values stay compile-time constants in
 `firmware/crates/comack-core/src/config.rs` — `SERVER` and `DEVICE_NAME`. The
 script warns when your `--server`/`--name` differ from those defaults; edit
 the file before flashing to actually change them. (The runtime config store
-planned alongside the portal moves both on-chip.) Leaving `--tskey` empty
-keeps the placeholder: the device will not join a tailnet, and since `SERVER`
+moves both on-chip: once a config is saved through the portal, the stored
+server and device name win.) Leaving `--tskey` empty
+keeps the placeholder: the device will not join a tailnet — after a portal
+save it runs LAN-only; with a fallback boot, since `SERVER`
 resolves via MagicDNS it will not reach the server by name either — point
 `SERVER` at a literal IP for a tailnet-less LAN setup.
 
@@ -162,9 +220,9 @@ At boot the device resolves one `DeviceConfig`: the Wi-Fi networks to join
 auth key.
 
 1. **Stored configuration first.** The `NvsDeviceConfigStore` adapter reads
-   the `device_config` blob in the `comack` NVS namespace. A provisioning
-   flow (the on-device setup portal, coming next) writes it; until then the
-   namespace is simply empty.
+   the `device_config` blob in the `comack` NVS namespace. The on-device
+   setup portal writes it (see "Provisioning a device" above); until then
+   the namespace is simply empty.
 2. **Compile-time fallback.** With nothing stored — or the store unreadable —
    the build's `secrets.rs` (networks, Tailscale key) and `config.rs`
    constants (`comack-server`, port 8000, `comack-display`) apply, with a
@@ -197,7 +255,7 @@ so the store is an in-memory fake in the host tests.
 |---|---|
 | PDM mic CLK / DIN / power enable | 42 / 41 / 38 |
 | E-paper SCK / MOSI / CS / DC / RST / BUSY (active low) | 7 / 9 / 10 / 11 / 12 / 13 |
-| Buttons: forward (right white) / back (left white) / trigger (green), active low | 4 / 5 / 3 |
+| Buttons: forward (right white) / back (left white, **also the setup button** — hold 3 s for the portal) / trigger (green), active low | 4 / 5 / 3 |
 | Onboard LED, active low (LOW = on) | 6 |
 
 ## Behaviour compared with the C++ firmware

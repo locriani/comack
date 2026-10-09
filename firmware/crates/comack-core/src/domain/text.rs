@@ -22,12 +22,19 @@ pub const CHAR_ADVANCE: usize = GLYPH_WIDTH + 1;
 /// at (`x`, `y`). Characters outside printable ASCII advance silently;
 /// glyphs clip at the frame edges instead of wrapping or panicking.
 pub fn draw_text(frame: &mut Frame, x: usize, y: usize, text: &str) {
+    draw_text_scaled(frame, x, y, 1, text);
+}
+
+/// Draws `text` like [`draw_text`] but with every ink pixel a `scale x
+/// scale` block, for screens readable across a room. Same silent-advance
+/// and clip-at-the-edges rules.
+pub fn draw_text_scaled(frame: &mut Frame, x: usize, y: usize, scale: usize, text: &str) {
     for (position, ch) in text.chars().enumerate() {
-        let glyph_x = x + position * CHAR_ADVANCE;
+        let glyph_x = x + position * CHAR_ADVANCE * scale;
         if glyph_x >= FRAME_WIDTH {
             break;
         }
-        draw_glyph(frame, glyph_x, y, ch);
+        draw_glyph(frame, glyph_x, y, scale, ch);
     }
 }
 
@@ -41,25 +48,26 @@ pub fn glyph(ch: char) -> Option<&'static [u8; GLYPH_HEIGHT]> {
     Some(&FONT_5X7[usize::from(index)])
 }
 
-fn draw_glyph(frame: &mut Frame, x: usize, y: usize, ch: char) {
+fn draw_glyph(frame: &mut Frame, x: usize, y: usize, scale: usize, ch: char) {
     let Some(rows) = glyph(ch) else {
         return;
     };
     for (row, bits) in rows.iter().enumerate() {
-        let pixel_y = y + row;
-        if pixel_y >= FRAME_HEIGHT {
-            return;
-        }
         for column in 0..GLYPH_WIDTH {
             // Bit 4 is the glyph's leftmost column.
             if bits & (1 << (GLYPH_WIDTH - 1 - column)) == 0 {
                 continue;
             }
-            let pixel_x = x + column;
-            if pixel_x >= FRAME_WIDTH {
-                break;
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    let pixel_x = x + column * scale + dx;
+                    let pixel_y = y + row * scale + dy;
+                    if pixel_x >= FRAME_WIDTH || pixel_y >= FRAME_HEIGHT {
+                        continue;
+                    }
+                    clear_pixel(frame, pixel_x, pixel_y);
+                }
             }
-            clear_pixel(frame, pixel_x, pixel_y);
         }
     }
 }
@@ -335,6 +343,35 @@ mod tests {
         // 'é' advances silently; 'A' lands one cell over, unclipped.
         assert_eq!(row_byte(&frame, 0), 0xFE);
         assert_eq!(frame[1], 0x3F);
+    }
+
+    #[test]
+    fn scaled_text_multiplies_ink_by_the_scale_squared() {
+        let ink = |frame: &Frame| -> usize {
+            frame
+                .iter()
+                .map(|&byte| (!byte).count_ones() as usize)
+                .sum()
+        };
+
+        let mut single: Frame = [0xFF; FRAME_BYTES];
+        draw_text(&mut single, 0, 0, "A");
+        let mut double: Frame = [0xFF; FRAME_BYTES];
+        draw_text_scaled(&mut double, 0, 0, 2, "A");
+        assert_eq!(ink(&double), 4 * ink(&single));
+
+        let mut triple: Frame = [0xFF; FRAME_BYTES];
+        draw_text_scaled(&mut triple, 0, 0, 3, "A");
+        assert_eq!(ink(&triple), 9 * ink(&single));
+    }
+
+    #[test]
+    fn scaled_text_clips_at_the_edges_without_wrapping() {
+        let mut frame: Frame = [0xFF; FRAME_BYTES];
+        // Both draws run off the right and bottom edges; the point is that
+        // they clip per pixel instead of panicking or wrapping.
+        draw_text_scaled(&mut frame, FRAME_WIDTH - 4, 0, 3, "A");
+        draw_text_scaled(&mut frame, 0, FRAME_HEIGHT - 2, 3, "A");
     }
 
     #[test]

@@ -22,6 +22,11 @@ impl Latch {
         self.changed.notify_all();
     }
 
+    /// Whether the latch has been set — for bounded waits.
+    pub fn is_set(&self) -> bool {
+        *self.set.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn wait(&self) {
         let guard = self.set.lock().unwrap_or_else(PoisonError::into_inner);
         drop(

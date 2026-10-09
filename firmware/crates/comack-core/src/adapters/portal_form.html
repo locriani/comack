@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comack setup</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f4f4f2;color:#1c1c1c}
+  main{max-width:26rem;margin:0 auto;padding:1.5rem}
+  h1{font-size:1.3rem;margin:0 0 .25rem}
+  p.lede{margin:.25rem 0 1.25rem;color:#555;font-size:.9rem}
+  label{display:block;font-weight:600;font-size:.85rem;margin:.9rem 0 .25rem}
+  input{box-sizing:border-box;width:100%;padding:.6rem;font-size:1rem;border:1px solid #bbb;border-radius:6px;background:#fff}
+  .hint{display:block;font-weight:400;color:#777;font-size:.75rem;margin-top:.2rem}
+  button{margin-top:1.4rem;width:100%;padding:.8rem;font-size:1.05rem;font-weight:600;color:#fff;background:#2a6041;border:0;border-radius:6px}
+  footer{margin-top:1.5rem;color:#666;font-size:.78rem;line-height:1.5}
+</style>
+</head>
+<body>
+<main>
+  <h1>Comack setup</h1>
+  <p class="lede">Enter the details for this device. They are saved on the device itself, and it will connect on its own afterwards.</p>
+  <form method="POST" action="/submit">
+    <label>Wi-Fi network name (SSID)
+      <input name="ssid" maxlength="32" required autocapitalize="none" autocomplete="off">
+    </label>
+    <label>Wi-Fi password
+      <input name="password" type="password" maxlength="64" autocomplete="new-password">
+      <span class="hint">Leave empty for an open network.</span>
+    </label>
+    <label>Server address
+      <input name="server" maxlength="128" required autocapitalize="none" autocomplete="off" placeholder="comack-server:8000 or 192.168.1.20:8000">
+      <span class="hint">Hostname or ip:port where the Comack server runs.</span>
+    </label>
+    <label>Device name
+      <input name="device_name" maxlength="32" autocapitalize="none" autocomplete="off" placeholder="comack-display">
+      <span class="hint">Optional; a default is used if empty.</span>
+    </label>
+    <label>Tailscale auth key
+      <input name="tailscale_key" type="password" maxlength="80" autocomplete="new-password" placeholder="tskey-auth-...">
+      <span class="hint">Optional. Leave empty to use the local network only (no tailnet).</span>
+    </label>
+    <button type="submit">Save and connect</button>
+  </form>
+  <footer>Saving replaces this device's stored configuration. To reopen this
+  page later, hold the device's <strong>left button for 3&nbsp;seconds</strong>.</footer>
+</main>
+</body>
+</html>

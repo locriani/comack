@@ -25,8 +25,8 @@ pub struct NvsDeviceConfigStore {
 impl NvsDeviceConfigStore {
     /// Opens the store read-write.
     pub fn open(partition: EspDefaultNvsPartition) -> Result<Self> {
-        let nvs = EspNvs::new(partition, NAMESPACE, true)
-            .context("opening the comack NVS namespace")?;
+        let nvs =
+            EspNvs::new(partition, NAMESPACE, true).context("opening the comack NVS namespace")?;
         Ok(Self { nvs })
     }
 }

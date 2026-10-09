@@ -101,9 +101,10 @@ impl Tailnet {
         Ok(Self { handle, registered })
     }
 
-    /// Block until the node has registered with the tailnet.
-    pub fn wait_registered(&self) {
-        self.registered.wait();
+    /// Whether the node has registered with the tailnet — for bounded
+    /// waits that must stay responsive to the setup button.
+    pub fn registered(&self) -> &crate::latch::Latch {
+        self.registered
     }
 }
 

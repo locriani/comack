@@ -11,15 +11,26 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::WifiModemPeripheral;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::{esp, esp_wifi_set_ps, wifi_ps_type_t_WIFI_PS_NONE};
-use esp_idf_svc::wifi::{
-    AccessPointConfiguration, AuthMethod, BlockingWifi, ClientConfiguration, Configuration,
-    EspWifi,
-};
+use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use log::{info, warn};
 
 use crate::latch::Latch;
 
 const CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Constructs the Wi-Fi stack without starting it. The plain station
+/// boot and the provisioning portal share one construction; whoever runs
+/// first owns the modem.
+pub fn stack(
+    modem: impl WifiModemPeripheral + 'static,
+    sysloop: EspSystemEventLoop,
+    nvs: EspDefaultNvsPartition,
+) -> Result<BlockingWifi<EspWifi<'static>>> {
+    Ok(BlockingWifi::wrap(
+        EspWifi::new(modem, sysloop.clone(), Some(nvs))?,
+        sysloop,
+    )?)
+}
 
 /// Start Wi-Fi and a supervisor thread that keeps it connected, moving to
 /// the next network whenever the current one drops or cannot be joined.
@@ -27,16 +38,19 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 ///
 /// The networks come from the device configuration — the NVS store when
 /// something is provisioned, otherwise this build's `secrets.rs` values.
-pub fn start(
-    modem: impl WifiModemPeripheral + 'static,
-    sysloop: EspSystemEventLoop,
-    nvs: EspDefaultNvsPartition,
+/// Configures a (already-constructed, stopped) stack for station mode on
+/// `networks` and starts the supervisor. The provisioning path calls this
+/// after the portal's access point has shut down; main calls it directly
+/// on a normal boot.
+pub fn supervise_networks(
+    mut wifi: BlockingWifi<EspWifi<'static>>,
     networks: heapless::Vec<WifiCredentials, MAX_NETWORKS>,
 ) -> Result<Arc<Latch>> {
     let Some(rotation) = NetworkRotation::new(networks) else {
-        anyhow::bail!("no Wi-Fi networks configured (device config store and secrets.rs both empty)");
+        anyhow::bail!(
+            "no Wi-Fi networks configured (device config store and secrets.rs both empty)"
+        );
     };
-    let mut wifi = BlockingWifi::wrap(EspWifi::new(modem, sysloop.clone(), Some(nvs))?, sysloop)?;
     wifi.set_configuration(&client_config(rotation.current())?)?;
     wifi.start()?;
     // Power save off: WireGuard wants low latency.
@@ -69,22 +83,6 @@ fn client_config(network: &WifiCredentials) -> Result<Configuration> {
         } else {
             AuthMethod::WPA2Personal
         },
-        ..Default::default()
-    }))
-}
-
-/// Builds the access-point configuration the provisioning portal will use.
-///
-/// Capability proof for the portal task: the AP mode API type-checks and
-/// links on this stack (the esp32s3 cross-compile builds this function).
-/// Exercising it on hardware is the portal PR's checklist. Unused until
-/// the portal calls it.
-#[allow(dead_code)]
-pub fn access_point_configuration(ssid: &str) -> Result<Configuration> {
-    Ok(Configuration::AccessPoint(AccessPointConfiguration {
-        ssid: ssid
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("SSID too long"))?,
         ..Default::default()
     }))
 }
