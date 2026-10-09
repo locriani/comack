@@ -28,8 +28,8 @@ Clean Architecture, with dependencies pointing inward only:
 
 | Layer | Where | Contents |
 |---|---|---|
-| Domain | `comack-core::domain` | `Frame`, `Issue`, `Navigator` (browse and snap-back rules), `ButtonPanel` (edge detection), `StreamStats`/`PeakMeter`, `NetworkRotation` |
-| Application | `comack-core::application` | `ComicViewer` and `AudioStreamer` use cases; ports `ComicSource`, `ComicTrigger`, `FrameDisplay`, `ButtonInput`, `Clock`, `AudioSource`, `AudioUplink`/`AudioSession` |
+| Domain | `comack-core::domain` | `Frame`, `Issue`, `Navigator` (browse and snap-back rules), `ButtonPanel` (edge detection), `StreamStats`/`PeakMeter`, `NetworkRotation`, `DeviceConfig` (bounded runtime configuration + its versioned codec) |
+| Application | `comack-core::application` | `ComicViewer` and `AudioStreamer` use cases; ports `ComicSource`, `ComicTrigger`, `FrameDisplay`, `ButtonInput`, `Clock`, `AudioSource`, `AudioUplink`/`AudioSession`, `DeviceConfigStore` (+ the stored-or-fallback resolver) |
 | Interface adapters | `comack-core::adapters` | `HttpComicService` (HTTP/1.1), `WebSocketUplink` (RFC 6455), `Epd7in5` (embedded-hal 1.0 SPI/GPIO), `ActiveLowButtons`, all written against a small `TcpConnector`/`TcpStream`/`HostResolver` boundary |
 | Frameworks and drivers | `esp/`, `comack-sim` | MicroLink FFI (`Tailnet`), ESP-IDF Wi-Fi, I2S PDM, SPI and GPIO; or `std::net`, a PBM file and a synthetic microphone |
 
@@ -78,7 +78,7 @@ Then:
 
 ```sh
 cd firmware/esp
-cp src/secrets.rs.example src/secrets.rs   # Wi-Fi networks + Tailscale auth key
+cp src/secrets.rs.example src/secrets.rs   # compile-time fallback: Wi-Fi networks + Tailscale auth key
 cargo run --release                        # builds ESP-IDF v5.5.5 on first run, flashes, opens the monitor
 ```
 
@@ -155,6 +155,41 @@ reruns, `--force`, overwrite protection, validation, the exact `espflash`
 arguments, and interactive prompts (via pty). Not executed here — a real
 ESP-IDF build and device flash need the Xtensa toolchain and hardware; the
 flag surface mirrors the manual flow documented above.
+## Device configuration
+
+At boot the device resolves one `DeviceConfig`: the Wi-Fi networks to join
+(primary first), the server host and port, the device name, and the Tailscale
+auth key.
+
+1. **Stored configuration first.** The `NvsDeviceConfigStore` adapter reads
+   the `device_config` blob in the `comack` NVS namespace. A provisioning
+   flow (the on-device setup portal, coming next) writes it; until then the
+   namespace is simply empty.
+2. **Compile-time fallback.** With nothing stored — or the store unreadable —
+   the build's `secrets.rs` (networks, Tailscale key) and `config.rs`
+   constants (`comack-server`, port 8000, `comack-display`) apply, with a
+   logged reason. Already-flashed devices therefore boot exactly as before,
+   and `secrets.rs` stays supported.
+
+Both paths run through the same bounded type (`comack_core::domain`:
+`DeviceConfig`, at most 5 networks) and the same `DeviceConfigStore` port,
+so the store is an in-memory fake in the host tests.
+
+### Verification notes
+
+- **Executed:** save/load/clear round-trip and empty-store fallback against
+  the in-memory store (`cargo test --workspace`); the versioned codec round-
+  trips every bounded field shape; `cargo build -p comack-core --target
+  thumbv7em-none-eabihf` proves the config and credential types are no_std.
+- **Executed:** the esp32s3 cross-compile builds the NVS adapter and the
+  access-point configuration builder (`wifi::access_point_configuration`),
+  proving the SoftAP mode API is available and links on this stack.
+- **Executed:** text rendering to the e-paper frame — `comack_core::domain`
+  `draw_text` renders the printable ASCII set with a 5×7 font, covered by
+  unit tests and visually inspected via the simulator's `text_sample` PBM.
+- **Not executed (hardware):** an actual NVS read/write cycle on the ESP32-S3
+  and switching the radio into access-point mode. Both are on the setup
+  portal PR's hardware checklist; no QEMU emulation exists in this repo.
 
 ## Board wiring
 

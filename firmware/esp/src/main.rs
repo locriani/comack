@@ -13,11 +13,12 @@ mod clock;
 mod latch;
 mod led;
 mod microphone;
+mod nvs_config;
 mod secrets;
 mod tailnet;
 mod wifi;
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -28,9 +29,11 @@ use comack_core::adapters::{
     Epd7in5, HttpClient, HttpComicService, HttpConfig, PressLatch, ServerLocator, WebSocketUplink,
     WsConfig,
 };
-use comack_core::application::{AudioStreamer, ComicViewer, StreamerConfig, ViewerConfig};
+use comack_core::application::{
+    AudioStreamer, ComicViewer, ConfigSource, StreamerConfig, ViewerConfig, load_with_source,
+};
 use comack_core::config::{self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE_HZ, AUDIO_WS_PATH};
-use comack_core::domain::{Frame, FRAME_BYTES};
+use comack_core::domain::{DeviceConfig, Frame, FRAME_BYTES};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::delay::FreeRtos;
@@ -48,6 +51,7 @@ use crate::buttons::InterruptButtons;
 use crate::clock::EspClock;
 use crate::led::InvertedLed;
 use crate::microphone::PdmMicrophone;
+use crate::nvs_config::NvsDeviceConfigStore;
 use crate::tailnet::{Tailnet, TailnetConfig};
 
 fn main() -> Result<()> {
@@ -60,6 +64,10 @@ fn main() -> Result<()> {
     let sysloop = EspSystemEventLoop::take()?;
     // Erases and re-initialises NVS if its layout changed.
     let nvs = EspDefaultNvsPartition::take()?;
+
+    // The configuration the device runs with: what the on-chip store
+    // holds, else this build's compile-time secrets.
+    let config = effective_config(&nvs)?;
 
     // Large allocations land in PSRAM (CONFIG_SPIRAM_USE_MALLOC).
     let mut frame: Box<Frame> = vec![0xFF; FRAME_BYTES]
@@ -112,24 +120,37 @@ fn main() -> Result<()> {
     // Onboard LED, inverted logic: LOW means on (Seeed board wiki).
     let led = InvertedLed::new(PinDriver::output(pins.gpio6)?);
 
-    wifi::start(peripherals.modem, sysloop, nvs, secrets::WIFI_NETWORKS)?.wait();
+    wifi::start(
+        peripherals.modem,
+        sysloop,
+        nvs,
+        config.networks.clone(),
+    )?
+    .wait();
 
-    let device_name: &'static _ = Box::leak(CString::new(config::DEVICE_NAME)?.into_boxed_c_str());
+    // MicroLink keeps the pointers it is given, so the configured identity
+    // leaks once and lives for the power cycle — including the server host,
+    // which the audio thread borrows beyond this stack frame.
+    let device_name: &'static _ =
+        Box::leak(CString::new(config.device_name.as_str())?.into_boxed_c_str());
+    let auth_key: &'static CStr =
+        Box::leak(CString::new(config.tailscale_auth_key.as_str())?.into_boxed_c_str());
+    let host: &'static str =
+        Box::leak(String::from(config.server_host.as_str()).into_boxed_str());
     info!(
         "Starting Tailscale (auth key {:.15}...)",
-        secrets::TAILSCALE_AUTH_KEY.to_string_lossy()
+        auth_key.to_string_lossy()
     );
     let tailnet = Tailnet::start(&TailnetConfig {
-        auth_key: secrets::TAILSCALE_AUTH_KEY,
+        auth_key,
         device_name,
         max_peers: 16,
         wifi_tx_power_dbm: 13,
     })?;
 
-    spawn_audio_streamer(tailnet, microphone)?;
+    spawn_audio_streamer(tailnet, microphone, host, config.server_port)?;
 
     tailnet.wait_registered();
-    let host = config::SERVER.host;
     let locator = ServerLocator::new(tailnet, host);
     let server = loop {
         if let Some(ip) = locator.locate() {
@@ -141,7 +162,7 @@ fn main() -> Result<()> {
     info!("MagicDNS resolved '{host}' -> {server}");
 
     let comics = HttpComicService::new(
-        HttpClient::new(tailnet, host, config::SERVER.port, HttpConfig::default()),
+        HttpClient::new(tailnet, host, config.server_port, HttpConfig::default()),
         server,
     );
     let mut viewer = ComicViewer::new(
@@ -159,8 +180,55 @@ fn main() -> Result<()> {
     }
 }
 
+/// The configuration the device runs with: what the on-chip store holds,
+/// else this build's compile-time `secrets.rs` and `config.rs` values.
+///
+/// A missing, unreadable or unopenable store degrades to the fallback with
+/// a logged reason — never to a failed boot — so an already-flashed device
+/// keeps coming up exactly as it did before runtime configuration existed.
+fn effective_config(nvs: &EspDefaultNvsPartition) -> Result<DeviceConfig> {
+    let fallback = DeviceConfig::from_compile_time(
+        &secrets::wifi_networks(),
+        config::SERVER,
+        config::DEVICE_NAME,
+        secrets::TAILSCALE_AUTH_KEY
+            .to_str()
+            .context("Tailscale auth key must be UTF-8")?,
+    )
+    .context("this build's compile-time secrets")?;
+
+    let store = match NvsDeviceConfigStore::open(nvs.clone()) {
+        Ok(store) => store,
+        Err(e) => {
+            warn!("Config store unavailable ({e:#}); using compile-time secrets.");
+            return Ok(fallback);
+        }
+    };
+    match load_with_source(&store, &fallback) {
+        Ok((config, source)) => {
+            info!(
+                "Device configuration: {}.",
+                match source {
+                    ConfigSource::Stored => "stored on the device (NVS)",
+                    ConfigSource::Fallback => "compile-time secrets (nothing stored)",
+                }
+            );
+            Ok(config)
+        }
+        Err(e) => {
+            warn!("Config store unreadable ({e:#}); using compile-time secrets.");
+            Ok(fallback)
+        }
+    }
+}
+
 /// Stream audio from a thread pinned to core 0, as the C++ firmware did.
-fn spawn_audio_streamer(tailnet: Tailnet, microphone: PdmMicrophone) -> Result<()> {
+fn spawn_audio_streamer(
+    tailnet: Tailnet,
+    microphone: PdmMicrophone,
+    host: &'static str,
+    port: u16,
+) -> Result<()> {
     const STACK: usize = 8192;
     ThreadSpawnConfiguration {
         name: Some(c"AudioStreamer"),
@@ -172,14 +240,9 @@ fn spawn_audio_streamer(tailnet: Tailnet, microphone: PdmMicrophone) -> Result<(
     .set()?;
     let spawned = thread::Builder::new().stack_size(STACK).spawn(move || {
         tailnet.wait_registered();
-        let locator = ServerLocator::new(tailnet, config::SERVER.host);
-        let uplink = WebSocketUplink::new(
-            tailnet,
-            locator,
-            config::SERVER.port,
-            AUDIO_WS_PATH,
-            WsConfig::default(),
-        );
+        let locator = ServerLocator::new(tailnet, host);
+        let uplink =
+            WebSocketUplink::new(tailnet, locator, port, AUDIO_WS_PATH, WsConfig::default());
         let mut buffer = vec![0i16; AUDIO_CHUNK_SAMPLES];
         let mut streamer =
             AudioStreamer::new(microphone, uplink, &mut buffer, StreamerConfig::default());

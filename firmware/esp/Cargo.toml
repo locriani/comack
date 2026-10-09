@@ -3,7 +3,7 @@ name = "comack-firmware"
 version = "0.1.0"
 description = "Comack firmware for the Seeed reTerminal E1001 (ESP32-S3): frameworks and composition root."
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.87"
 license = "MIT"
 
 # Standalone workspace: this crate needs the Xtensa (`esp`) toolchain and
@@ -26,6 +26,7 @@ anyhow = "1"
 comack-core = { path = "../crates/comack-core" }
 embedded-hal = "1.0"
 esp-idf-svc = "0.53"
+heapless = "0.9"
 log = "0.4"
 
 [build-dependencies]

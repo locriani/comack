@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 embedded-hal.workspace = true
+heapless = "0.9"
 log.workspace = true
 
 [dev-dependencies]

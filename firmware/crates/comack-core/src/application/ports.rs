@@ -6,7 +6,28 @@
 
 use core::fmt::Debug;
 
-use crate::domain::{Button, ButtonLevels, Frame, Instant, Issue};
+use crate::domain::{Button, ButtonLevels, DeviceConfig, Frame, Instant, Issue};
+
+/// Device configuration storage: load the settings the device runs with,
+/// or `None` when nothing is stored yet (then the compile-time fallback
+/// keeps the device booting).
+///
+/// Implemented by the ESP adapter over the default NVS partition
+/// (`comack` namespace) and by an in-memory double for host tests.
+pub trait DeviceConfigStore {
+    /// Why a load, save or clear failed.
+    type Error;
+
+    /// Reads the stored configuration, or `None` when nothing is stored.
+    fn load(&self) -> Result<Option<DeviceConfig>, Self::Error>;
+
+    /// Persists the configuration, replacing whatever was stored.
+    fn save(&mut self, config: &DeviceConfig) -> Result<(), Self::Error>;
+
+    /// Erases the stored configuration; the device falls back to its
+    /// compile-time values on the next boot.
+    fn clear(&mut self) -> Result<(), Self::Error>;
+}
 
 /// A monotonic clock.
 pub trait Clock {

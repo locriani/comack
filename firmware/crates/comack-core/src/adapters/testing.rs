@@ -1,5 +1,7 @@
-//! Scripted TCP doubles shared by the adapter tests.
+//! Scripted doubles for host-side tests: TCP connectors that replay a
+//! wire script, plus an in-memory device-config store.
 
+use core::convert::Infallible;
 use core::net::SocketAddrV4;
 use core::time::Duration;
 use std::cell::RefCell;
@@ -8,6 +10,8 @@ use std::rc::Rc;
 use std::vec::Vec;
 
 use super::net::{NetError, TcpConnector, TcpStream};
+use crate::application::ports::DeviceConfigStore;
+use crate::domain::DeviceConfig;
 
 /// What one `recv` call returns.
 #[derive(Clone, Debug)]
@@ -102,5 +106,30 @@ impl TcpStream for ScriptedStream {
 impl Drop for ScriptedStream {
     fn drop(&mut self) {
         self.0.borrow_mut().closed += 1;
+    }
+}
+
+/// In-memory [`DeviceConfigStore`] double: keeps the last saved
+/// configuration in place, nothing touches hardware.
+#[derive(Debug, Default)]
+pub struct InMemoryConfigStore {
+    config: Option<DeviceConfig>,
+}
+
+impl DeviceConfigStore for InMemoryConfigStore {
+    type Error = Infallible;
+
+    fn load(&self) -> Result<Option<DeviceConfig>, Self::Error> {
+        Ok(self.config.clone())
+    }
+
+    fn save(&mut self, config: &DeviceConfig) -> Result<(), Self::Error> {
+        self.config = Some(config.clone());
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<(), Self::Error> {
+        self.config = None;
+        Ok(())
     }
 }

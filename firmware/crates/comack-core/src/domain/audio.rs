@@ -60,10 +60,12 @@ impl StreamStats {
     /// Account for one delivered chunk; returns a report when one is due.
     pub fn record_sent(&mut self) -> Option<StreamReport> {
         self.chunks_sent = self.chunks_sent.wrapping_add(1);
-        (self.chunks_sent % self.report_every == 0).then(|| StreamReport {
-            chunks_sent: self.chunks_sent,
-            peak: self.meter.take(),
-        })
+        self.chunks_sent
+            .is_multiple_of(self.report_every)
+            .then(|| StreamReport {
+                chunks_sent: self.chunks_sent,
+                peak: self.meter.take(),
+            })
     }
 
     /// Chunks delivered so far.
