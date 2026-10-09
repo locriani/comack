@@ -182,13 +182,18 @@ fn viewer_follows_the_server_and_the_buttons() {
 
     buttons.press(TRIGGER);
     viewer.tick();
-    clock.advance(Duration::from_secs(2));
-    viewer.tick();
     assert_eq!(server.state().triggers, 1);
     assert_eq!(
         *screen.0.borrow(),
         [5, 4, 2, 4, 5, 6],
-        "triggered comic shown"
+        "triggered comic shown on the trigger tick"
+    );
+    clock.advance(Duration::from_secs(2));
+    viewer.tick();
+    assert_eq!(
+        *screen.0.borrow(),
+        [5, 4, 2, 4, 5, 6],
+        "no re-flash on the catch-up poll"
     );
 }
 

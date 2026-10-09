@@ -94,7 +94,9 @@ cargo run --release                        # builds ESP-IDF v5.5.5 on first run,
 
 ## Behaviour compared with the C++ firmware
 
-The port keeps the C++ firmware's timings: poll every 10 s, re-poll 2 s after a trigger, snap back after 60 s of browsing, sample buttons every 50 ms, send 100 ms audio chunks, report every 50 chunks, and back off 2 s on reconnect. It also keeps the proven e-paper init sequence and the Wi-Fi rotation. These things changed on purpose:
+The port keeps the C++ firmware's timings: poll every 10 s, re-poll 2 s after a trigger while a new comic generates, snap back after 60 s of browsing, sample buttons every 50 ms, send 100 ms audio chunks, report every 50 chunks, and back off 2 s on reconnect. It also keeps the proven e-paper init sequence and the Wi-Fi rotation. These things changed on purpose:
+
+- **The trigger fetches and shows on the press itself.** The C++ firmware waited for the 2 s re-poll; now a successful trigger POST polls, downloads and shows on the same tick. The 2 s cadence remains as catch-up while the server generates, until one cycle past the normal poll interval.
 
 - **HTTP status codes are checked.** A 404 from `/api/comics/current` means "nothing revealed yet". A frame only counts if the status is 200 and exactly 48 000 bytes arrive.
 - **The peak meter handles `i16::MIN` (−32768).** In C, negating it overflowed.

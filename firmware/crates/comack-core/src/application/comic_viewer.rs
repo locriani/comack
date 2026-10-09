@@ -19,8 +19,10 @@ pub struct ViewerConfig {
     /// How often to ask the server for the latest issue. The server only
     /// reveals a comic once the room goes quiet, so polling is cheap enough.
     pub poll_interval: Duration,
-    /// After a trigger press, poll again this soon: a held comic is revealed
-    /// immediately.
+    /// After a trigger press whose poll finds nothing new, re-poll this
+    /// often while the server generates. The catch-up ends once the new
+    /// issue appears or one cycle past [`ViewerConfig::poll_interval`]
+    /// elapses.
     pub trigger_repoll_delay: Duration,
     /// Return to the latest issue after this long without a browse press.
     pub browse_timeout: Duration,
@@ -49,6 +51,9 @@ pub struct ComicViewer<'f, S, D, B, C> {
     navigator: Navigator,
     panel: ButtonPanel,
     next_poll: Instant,
+    /// Deadline of a trigger's catch-up window, while the short trigger
+    /// cadence keeps polling for a comic that is still generating.
+    catchup_until: Option<Instant>,
     config: ViewerConfig,
 }
 
@@ -78,6 +83,7 @@ where
             navigator: Navigator::new(config.browse_timeout),
             panel: ButtonPanel::default(),
             next_poll: Instant::ZERO,
+            catchup_until: None,
             config,
         }
     }
@@ -86,8 +92,8 @@ where
     pub fn tick(&mut self) -> Duration {
         let now = self.clock.now();
         if now >= self.next_poll {
-            self.next_poll = now + self.config.poll_interval;
-            self.poll(now);
+            let refreshed = self.poll(now);
+            self.schedule_next_poll(now, refreshed);
         }
 
         let presses = self.panel.update(self.buttons.levels());
@@ -110,27 +116,64 @@ where
         &self.display
     }
 
-    fn poll(&mut self, now: Instant) {
+    /// Poll the server and refresh the screen if it is out of date; `true`
+    /// when a refresh reached the screen.
+    fn poll(&mut self, now: Instant) -> bool {
         match self.comics.latest_issue() {
             Ok(Some(latest)) => self.navigator.report_latest(latest),
             Ok(None) => {}
             Err(e) => warn!("Could not fetch the latest issue: {e:?}"),
         }
+        let mut refreshed = false;
         if let Some(issue) = self.navigator.pending_refresh(now) {
             if self.show(issue) {
                 self.navigator.mark_shown(issue);
+                refreshed = true;
             }
         }
+        refreshed
+    }
+
+    /// Schedule the next poll after one ran. A poll that refreshed the
+    /// screen — and any poll once the trigger catch-up window has closed —
+    /// returns to the normal cadence; inside the window, a poll that found
+    /// nothing new stays on the short trigger cadence.
+    fn schedule_next_poll(&mut self, now: Instant, refreshed: bool) {
+        if refreshed || !self.catchup_active(now) {
+            self.catchup_until = None;
+            self.next_poll = now + self.config.poll_interval;
+        } else {
+            self.next_poll = now + self.config.trigger_repoll_delay;
+        }
+    }
+
+    /// Whether a trigger is still waiting for its comic inside the catch-up
+    /// window.
+    fn catchup_active(&self, now: Instant) -> bool {
+        self.catchup_until.is_some_and(|deadline| now < deadline)
     }
 
     fn on_trigger(&mut self) {
         info!("Button: trigger");
         if let Err(e) = self.comics.trigger() {
             warn!("Trigger request failed: {e:?}");
+            return;
         }
-        // Stop browsing and look for the new comic soon.
+        // Stop browsing and look for the new comic on this very tick: the
+        // trigger may have revealed a held comic, and only the e-paper
+        // refresh stands between the press and that page.
         self.navigator.end_browse();
-        self.next_poll = self.clock.now() + self.config.trigger_repoll_delay;
+        let now = self.clock.now();
+        let revealed = self.poll(now);
+        if !revealed {
+            // Nothing new yet — the server is generating. Keep the short
+            // trigger cadence until the new issue appears or the catch-up
+            // window (one trigger cycle past the normal poll interval)
+            // elapses.
+            self.catchup_until =
+                Some(now + self.config.poll_interval + self.config.trigger_repoll_delay);
+        }
+        self.schedule_next_poll(now, revealed);
     }
 
     fn on_navigate(&mut self, direction: Direction) {
@@ -529,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn trigger_fires_request_and_repolls_soon() {
+    fn trigger_shows_a_revealed_comic_on_the_same_tick() {
         let h = Harness::new(Some(5));
         h.server().reveal_on_trigger = true;
         let mut buf = frame();
@@ -538,29 +581,105 @@ mod tests {
         h.buttons.tap(BACK);
         viewer.tick();
         h.buttons.tap(TRIGGER);
+        // No clock advance: the revealed comic is fetched and shown now,
+        // not after the 2 s re-poll.
         viewer.tick();
         assert_eq!(h.server().triggers, 1);
+        assert_eq!(h.shown(), [5, 4, 6], "triggered comic shown immediately");
         assert!(
             !viewer.navigator().is_browsing(h.clock.now()),
             "trigger ends browsing"
         );
-        h.clock.advance(Duration::from_secs(2));
-        viewer.tick();
-        assert_eq!(h.shown(), [5, 4, 6]);
-    }
-
-    #[test]
-    fn failed_trigger_still_repolls() {
-        let h = Harness::new(Some(1));
-        let mut buf = frame();
-        let mut viewer = h.viewer(&mut buf);
-        viewer.tick();
-        h.server().offline = true;
-        h.buttons.tap(TRIGGER);
-        viewer.tick();
-        h.server().offline = false;
+        // The catch-up never starts after a same-tick show: the next poll
+        // waits a full poll_interval.
         h.clock.advance(Duration::from_secs(2));
         viewer.tick();
         assert_eq!(h.server().polls, 2);
+        h.clock.advance(Duration::from_secs(8));
+        viewer.tick();
+        assert_eq!(h.server().polls, 3);
+        assert_eq!(h.shown(), [5, 4, 6], "no re-flash of the same issue");
+    }
+
+    #[test]
+    fn trigger_while_generating_repolls_until_the_new_issue_appears() {
+        let h = Harness::new(Some(5));
+        let mut buf = frame();
+        let mut viewer = h.viewer(&mut buf);
+        viewer.tick();
+        h.buttons.tap(TRIGGER);
+        // Nothing new yet: the screen is not re-flashed, but the trigger's
+        // own poll ran on the same tick.
+        viewer.tick();
+        assert_eq!(h.shown(), [5]);
+        assert_eq!(h.server().polls, 2);
+        // The catch-up cadence keeps polling every 2 s while generating.
+        h.clock.advance(Duration::from_secs(2));
+        viewer.tick();
+        assert_eq!(h.server().polls, 3);
+        assert_eq!(h.shown(), [5]);
+        h.server().latest = Some(6);
+        h.clock.advance(Duration::from_secs(2));
+        viewer.tick();
+        assert_eq!(h.shown(), [5, 6]);
+        // The new issue is up: the normal cadence resumes.
+        h.clock.advance(Duration::from_secs(2));
+        viewer.tick();
+        assert_eq!(h.server().polls, 4);
+    }
+
+    #[test]
+    fn trigger_catchup_window_is_bounded() {
+        let h = Harness::new(Some(5));
+        let mut buf = frame();
+        let mut viewer = h.viewer(&mut buf);
+        viewer.tick();
+        h.buttons.tap(TRIGGER);
+        viewer.tick();
+        assert_eq!(h.server().polls, 2);
+        // Catch-up polls every 2 s through poll_interval +
+        // trigger_repoll_delay (12 s after the press).
+        for expected in 3..=8 {
+            h.clock.advance(Duration::from_secs(2));
+            viewer.tick();
+            assert_eq!(h.server().polls, expected);
+        }
+        // The window has elapsed: the next poll waits a full poll_interval.
+        h.clock.advance(Duration::from_secs(2));
+        viewer.tick();
+        assert_eq!(h.server().polls, 8);
+        h.server().latest = Some(6);
+        h.clock.advance(Duration::from_secs(8));
+        viewer.tick();
+        assert_eq!(h.shown(), [5, 6], "normal polling still finds it");
+    }
+
+    #[test]
+    fn failed_trigger_changes_nothing() {
+        let h = Harness::new(Some(5));
+        let mut buf = frame();
+        let mut viewer = h.viewer(&mut buf);
+        viewer.tick();
+        h.buttons.tap(BACK);
+        viewer.tick();
+        assert_eq!(h.shown(), [5, 4]);
+        h.server().offline = true;
+        h.buttons.tap(TRIGGER);
+        viewer.tick();
+        assert_eq!(h.server().triggers, 1);
+        assert!(
+            viewer.navigator().is_browsing(h.clock.now()),
+            "a failed trigger leaves the browse alone"
+        );
+        h.server().offline = false;
+        // No catch-up poll: a failed trigger leaves the schedule untouched.
+        h.clock.advance(Duration::from_secs(2));
+        viewer.tick();
+        assert_eq!(h.server().polls, 1);
+        // The next poll runs on the normal cadence and holds the browse.
+        h.clock.advance(Duration::from_secs(8));
+        viewer.tick();
+        assert_eq!(h.server().polls, 2);
+        assert_eq!(h.shown(), [5, 4]);
     }
 }
