@@ -9,8 +9,9 @@ your screen shows).
 
 **`OSError: [Errno 98] Address already in use` (or "port is already
 allocated")** — something else has `PORT`. Find it (`ss -tlnp | grep 8000`),
-stop it, or change the port: `PORT=8001` in `.env` (or the unit/compose file)
-and restart — `PORT` is a restart-required setting, not hot-adjustable.
+stop it, or change the port: `PORT=8001` in `.env` (the Compose container
+mounts that same file; a systemd unit pin would outrank it) and restart —
+`PORT` is a restart-required setting, not hot-adjustable.
 The same applies to whatever reverse proxy sits in front.
 
 **`Comack configuration is invalid: <VAR> = <value>: …` at startup** — the

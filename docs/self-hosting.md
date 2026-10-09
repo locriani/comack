@@ -1,27 +1,35 @@
 # Self-hosting
 
 Running Comack on a machine you own, for longer than a terminal session —
-Docker Compose, systemd, and the optional `WEB_TOKEN` access control.
+Docker Compose, systemd, Tailscale, and the optional `WEB_TOKEN` access
+control.
 
 Three deployment shapes; pick by where rendering happens:
 
 | Shape | Fits | Notes |
 |---|---|---|
-| [Docker Compose](#docker-compose) | "Just run it" on a Linux box | Image includes the full AI stack; settings are set in the compose file |
+| [Docker Compose](#docker-compose) | "Just run it" on a Linux box | Image includes the full AI stack; settings live in `.env` and survive recreation |
 | [systemd + venv](#systemd-venv-the-comack-server-profile) | The comack-server profile: local GPU, models cached, boots with the system | What `deploy_comack-server.sh` sets up |
 | Light server + external APIs | A small box (or laptop) with no GPU; rendering and mining happen elsewhere | `presets/external-api.env`, uvicorn in a venv or tmux |
 
 Verification status for this page, stated up front: `docker compose config`
-was **executed** against this repo's compose file (Compose v2.39.4) — the
+was **executed** against this repo's compose file (Compose v5.6.0) — the
 container **build and run were not** (no Docker daemon in the sandbox where
-this was verified). `comack.service` and `deploy_comack-server.sh` were
-**inspected**, not run against a real host. The `WEB_TOKEN` behavior was
-**executed and verified** against a running server.
+this was verified). `scripts/setup.sh` was **executed end-to-end** on a clean
+checkout (light core; the second run verified as a no-op, an edited `.env`
+left untouched, and the rendered `comack.service.rendered` free of
+placeholders), `bash -n` and shellcheck 0.10.0 clean. The `--with-tailscale`
+path was **partially exercised**: its already-installed / already-connected
+skips and its installer-failure fallback ran in that sandbox; a real install
+and `tailscale up` did not (no tailnet there). `comack.service` and
+`deploy_comack-server.sh` were **inspected**, not run against a real host. The
+`WEB_TOKEN` behavior was **executed and verified** against a running server.
 
 ## Docker compose
 
 ```sh
 git clone https://github.com/locriani/comack && cd comack
+cp .env.example .env     # settings live here — the container mounts it
 docker compose up -d --build
 # Dashboard: http://localhost:8000/
 ```
@@ -36,30 +44,27 @@ What you get (from `docker-compose.yml`, validated with
 - **`network_mode: host`** — the server binds the host's ports directly; the
   device streams to the same address the dashboard uses. There is no separate
   port mapping to edit.
+- **`./.env` bind-mounted to `/app/.env`** — the container reads its settings
+  from the same `.env` a venv install uses, and dashboard edits persist into
+  it ([details below](#settings-with-compose)). Create it before the first
+  `up` (the `cp` above): if the host file is missing, Docker creates a
+  *directory* at that path and the server cannot read its settings.
 - **`./data` bind-mounted to `/app/data`** — comics and the database survive
   rebuilds and live where you can back them up.
 - **`restart: unless-stopped`**.
 
-### Settings with compose — important
+### Settings with compose
 
-`docker-compose.yml` hardcodes its settings in the service's `environment:`
-block (`LLM_URL`, cadence bounds, `POS_SCRAMBLE_RATE`, …). Compose does **not
-read the repo's `.env`** for these — a `.env` file you create for a venv
-install has no effect on the container, because the compose file contains no
-`${VAR}` interpolation. To change container settings:
-
-- edit the `environment:` block in `docker-compose.yml`, then
-  `docker compose up -d` to recreate, **or**
-- add explicit interpolation to the compose file
-  (`- LLM_URL=${LLM_URL:?set in .env}`) if you prefer `.env`-driven
-  deployments.
-
-A related consequence: `PATCH /api/config` and the settings page persist
-their changes to `.env` at the app root — inside the container that is
-`/app/.env`, which is **not** on the bind-mounted volume and does not survive
-container recreation. Any container setting you care about belongs in the
-compose `environment:` block (where, as a real environment variable, it also
-outranks any `.env`).
+The container reads its settings from the repo-root `.env` (bind-mounted to
+`/app/.env`) — the same file a venv install uses, seeded from
+[`.env.example`](../.env.example). `PATCH /api/config` and the settings page
+persist their changes to that file, so **edits made in the dashboard survive
+container recreation**. To change a setting: edit `.env` (or use the
+dashboard) and `docker compose up -d` — hot-applied settings take effect
+immediately, the restart-required ones on the recreate. The compose file sets
+no environment variables of its own, so `.env` is authoritative (a real
+environment variable would still outrank it — see
+[how configuration works](configuration-reference.md#how-configuration-works)).
 
 The compose file validated cleanly with:
 
@@ -70,35 +75,33 @@ docker compose config -q   # exit 0 — syntax + schema OK (verified)
 ## systemd (venv) — the comack-server profile
 
 For a GPU machine with models already cached, run the server as a system
-service. [`comack.service`](../comack.service) ships in the repo root; before
-installing, edit:
-
-1. `User=` — the user that owns the checkout (and access to the GPU).
-2. `WorkingDirectory=` and `ExecStart=` — where the repo lives; ExecStart
-   points at the venv's uvicorn (`/home/your-user/comack/.venv/bin/uvicorn`).
-3. `Environment=LLM_URL=` — your OpenAI-compatible endpoint (plain IP, LAN
-   hostname, or Tailscale hostname), e.g. `http://your-llm-server:80/`.
-4. `Environment=FLUX_MODEL_ID=` — the unit defaults to
-   `black-forest-labs/FLUX.1-schnell` (GGUF, ~10 GB VRAM headroom); use
-   `stabilityai/sd-turbo` on smaller GPUs.
-5. `Environment=HF_HUB_OFFLINE=1` — the unit ships with it because models are
-   expected to be cached already; **unset it once** when a new model needs
-   downloading.
-
-Then:
+service. [`scripts/setup.sh`](../scripts/setup.sh) does the whole path: it
+creates the venv, installs the light core (`--ai` adds the full
+torch/diffusers/faster-whisper stack of `requirements.txt`), seeds `.env`,
+and renders [`comack.service`](../comack.service) with your user and real
+paths into `comack.service.rendered` — installing it when systemd is
+present, printing the copy commands when not:
 
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt    # full stack incl. torch/diffusers
-sudo cp comack.service /etc/systemd/system/
-sudo systemctl daemon-reload
+./scripts/setup.sh            # add --ai for the local inference stack
 sudo systemctl enable --now comack
-journalctl -u comack -f                      # watch the startup log
+journalctl -u comack -f       # watch the startup log
 ```
 
-Real environment variables in the unit **win over `.env`**: if you later edit
-a setting in the dashboard or `.env` and it "doesn't take", the unit is
-pinning it. Edit the unit instead (then `daemon-reload` + `restart`).
+The rendered unit pins the comack-server-profile defaults
+(`FLUX_MODEL_ID=black-forest-labs/FLUX.1-schnell` — the GGUF model with
+~10 GB VRAM headroom; use `stabilityai/sd-turbo` on smaller GPUs — plus
+`HF_HUB_OFFLINE=1` because models are expected to be cached already, and
+`SNEAKY_SILENCE_SECONDS=0`). `LLM_URL` and every other setting are read
+from the repo-root `.env`: the unit deliberately does not pin them, so
+edits made in the dashboard's settings page take effect. (Unset
+`HF_HUB_OFFLINE` once when a new model needs downloading.)
+
+Real environment variables in the unit **win over `.env`**: the pins above
+are the only ones. If you later edit a pinned setting in the dashboard and
+it "doesn't take", that pin is why — edit the unit (edit `comack.service`,
+re-run `scripts/setup.sh`, re-install the rendered file), then
+`daemon-reload` + `restart`.
 
 ## Deploying to a remote host
 
@@ -113,6 +116,50 @@ It excludes `.env` (the target's own settings are authoritative there),
 `.venv`, `.git`, `firmware/`, and `data/` (the target builds its own history).
 It prints the follow-up commands (compose, or the systemd path above); it
 does not install anything on the target by itself.
+
+## Tailscale
+
+The device is a native tailnet node (via its vendored MicroLink client) and
+resolves the server by its Tailscale **MagicDNS** name — the compile-time
+default is the literal hostname `comack-server`. The rest of this page used to
+assume Tailscale was already set up; this section closes that gap.
+
+The one-script path — installs tailscaled with the official installer, then
+joins (key from the `TS_AUTH_KEY` environment variable, a prompt, or the
+interactive login URL; whichever step is already done is skipped):
+
+```sh
+TS_AUTH_KEY=tskey-auth-… ./scripts/setup.sh --with-tailscale
+```
+
+The same two steps by hand:
+
+```sh
+curl -fsSL https://tailscale.com/install.sh | sh   # official installer
+sudo tailscale up                                  # prints a login URL, or:
+sudo tailscale up --auth-key=tskey-auth-… --hostname=comack-server
+```
+
+- **Auth keys** are pre-generated at
+  [login.tailscale.com](https://login.tailscale.com) (`tskey-auth-…`);
+  `--auth-key=` lets a headless box join without a browser.
+- **Name this node `comack-server`** (`--hostname=comack-server`) — the firmware
+  looks that exact name up via MagicDNS today; pointing the device at a
+  different name requires a firmware change (runtime server addressing is
+  planned device-side work). A server that should stay connected
+  indefinitely is also a candidate for disabling key expiry in the admin
+  console — a security tradeoff, so only for machines you trust.
+- **WEB_TOKEN and the tailnet:** with `WEB_TOKEN` empty, browser-facing
+  APIs are open — defensible because the tailnet is a private, single-user
+  network, and the device's paths must stay tokenless regardless (see the
+  next section). Set `WEB_TOKEN` when you want the browser APIs locked even
+  inside the tailnet; it is one layer, not the only one.
+
+Verification: the install and join steps follow Tailscale's documented
+Linux install ([tailscale.com/kb/1031/install-linux](https://tailscale.com/kb/1031/install-linux))
+and were **inspected, not executed** against a real tailnet (none in the
+verification sandbox); `--with-tailscale`'s skip logic and its
+installer-failure fallback were exercised in that sandbox.
 
 ## Access token (WEB_TOKEN)
 
@@ -171,4 +218,5 @@ Verified behavior when set (all executed):
 | `PATCH /api/config` no token | 401 — **unsetting the token requires the token**: send the same Bearer header with `{"WEB_TOKEN": ""}` |
 
 Choose a long random value (`openssl rand -hex 32`). Combining with a reverse
-proxy or Tailscale is encouraged — the token is one layer, not the only one.
+proxy or Tailscale is encouraged — see [Tailscale](#tailscale) above; the
+token is one layer, not the only one.

@@ -7,9 +7,9 @@ Grouped like `.env.example`.
 
 ## How configuration works
 
-- **Precedence.** Real process environment variables (systemd unit,
-  docker-compose `environment:`) win over the repo-root `.env` file, which
-  wins over the built-in defaults below.
+- **Precedence.** Real process environment variables (systemd unit) win over
+  the repo-root `.env` file — also inside the Compose container, which
+  bind-mounts that file — which wins over the built-in defaults below.
 - **Where to set things.** `.env` in the repo root (copy `.env.example` or a
   [preset](../presets/)), the dashboard's Settings page, or `PATCH /api/config`
   — all three persist to `.env` and produce the same validated result. A value

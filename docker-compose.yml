@@ -4,18 +4,11 @@ services:
     container_name: comack-server
     restart: unless-stopped
     network_mode: "host"
-    environment:
-      - HOST=0.0.0.0
-      - PORT=8000
-      - LLM_URL=http://127.0.0.1:80/v1
-      # Cadence: a new comic is generated when enough requested lines have arrived,
-      # but no sooner than COMIC_MIN_MINUTES and no later than COMIC_MAX_MINUTES.
-      - COMIC_MIN_MINUTES=30
-      - COMIC_MAX_MINUTES=720
-      # Narrative arc length bounds, in panels
-      - ARC_MIN_PANELS=12
-      - ARC_MAX_PANELS=60
-      - SNEAKY_SILENCE_SECONDS=0
-      - POS_SCRAMBLE_RATE=0.25
     volumes:
       - ./data:/app/data
+      # Settings: the server reads the repo-root .env (mounted at /app/.env)
+      # and writes dashboard/PATCH edits back to it, so they survive container
+      # recreation. Create ./.env first (`cp .env.example .env`) — if the host
+      # file is missing, Docker creates a directory here and the server cannot
+      # read its settings.
+      - ./.env:/app/.env

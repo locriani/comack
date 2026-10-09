@@ -29,6 +29,12 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .            # light core: server, web UI, tests — no torch/diffusers
 ```
 
+Or let the repo's script do all of it — including the `.env` seeding and the
+systemd unit rendering covered over on
+[self-hosting](self-hosting.md#systemd-venv-the-comack-server-profile):
+`./scripts/setup.sh` is idempotent (every step skips itself when already
+done); `--ai` adds [the heavy stack](#4-add-the-heavy-ai-stack-optional).
+
 The light core installs FastAPI, uvicorn, Pillow, NumPy, NLTK, httpx and
 pydantic-settings — everything the API, privacy scrambler, compositor and web
 UI need. It deliberately excludes the heavy AI wheels (`torch`, `diffusers`,
@@ -217,6 +223,10 @@ sandbox, no GPU, no display):
 
 - `pip install -e '.[dev]'` (the light core plus pytest/ruff) and
   `pytest -q` → 99 passed + 23 subtests passed.
+- `scripts/setup.sh` end-to-end on a clean checkout (light core): the second
+  run verified as a no-op, an edited `.env` left untouched, and the rendered
+  `comack.service.rendered` free of placeholders. `bash -n` and shellcheck
+  0.10.0 clean.
 - Server boot, startup log lines, and the honest first-comic failure shown
   above.
 - All three connection probes and their "not installed / not configured"
