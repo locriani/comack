@@ -20,440 +20,225 @@
 <body class="min-h-screen flex flex-col">
 
   <!-- Header -->
-  <header class="border-b border-gray-800 bg-[#161922] px-6 py-4 flex items-center justify-between sticky top-0 z-50">
-    <div class="flex items-center space-x-3">
-      <div class="w-8 h-8 rounded bg-white text-black font-black flex items-center justify-center text-xl tracking-tighter">C!</div>
-      <div>
+  <header class="border-b border-gray-800 bg-[#161922] px-6 py-4 flex items-center justify-between gap-4 sticky top-0 z-50">
+    <div class="flex items-center space-x-3 min-w-0">
+      <div class="w-8 h-8 rounded bg-white text-black font-black flex items-center justify-center text-xl tracking-tighter shrink-0">C!</div>
+      <div class="min-w-0">
         <h1 class="text-lg font-bold tracking-wide">COMACK</h1>
-        <p class="text-xs text-gray-400 mono">reTerminal E1001 • comack-server</p>
+        <p id="identityLine" class="text-xs text-gray-400 mono truncate"></p>
       </div>
     </div>
-    
+
+    <nav class="flex items-center space-x-1" role="tablist" aria-label="Dashboard views">
+      <button data-view="dashboard" aria-selected="true" class="text-xs mono px-3 py-1.5 rounded-md border border-transparent text-indigo-300 border-indigo-500 hover:text-gray-200">Dashboard</button>
+      <button data-view="archive" aria-selected="false" class="text-xs mono px-3 py-1.5 rounded-md border border-transparent text-gray-400 hover:text-gray-200">Archive</button>
+      <button data-view="settings" aria-selected="false" class="text-xs mono px-3 py-1.5 rounded-md border border-transparent text-gray-400 hover:text-gray-200">Settings</button>
+    </nav>
+
     <div class="flex items-center space-x-4">
       <a href="/reader" class="text-xs mono px-3 py-1.5 rounded-md border border-gray-700 hover:border-indigo-500 hover:text-indigo-300">📖 Reader</a>
       <div id="connectionStatus" class="flex items-center space-x-2 text-xs mono px-3 py-1 rounded-full bg-red-950/80 text-red-400 border border-red-800">
         <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
         <span>CONNECTING...</span>
       </div>
-      <button onclick="triggerGenerate()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-md transition shadow">
+      <button id="generateBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-md transition shadow">
         ⚡ Generate Comic Now
       </button>
     </div>
   </header>
 
-  <!-- Main Grid -->
-  <main class="flex-1 p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+  <main class="flex-1 flex flex-col">
 
-    <!-- Left Column: Display & Sneaky Radar (7 cols) -->
-    <div class="lg:col-span-8 flex flex-col space-y-6">
+    <!-- ═══════════════ Dashboard view ═══════════════ -->
+    <section id="view-dashboard" class="flex-1 p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-      <!-- Story Arc Status Card -->
-      <div class="bg-[#161922] border border-gray-800 rounded-xl p-4 flex flex-col space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="text-xs mono uppercase text-indigo-400 font-bold tracking-wider">Current Narrative Universe</span>
-          <span id="arcGenre" class="text-xs mono px-2 py-0.5 rounded bg-gray-800 text-gray-300">Loading...</span>
-        </div>
-        <h2 id="arcTitle" class="text-lg font-bold text-white">Loading Story Arc...</h2>
-        <p id="arcPremise" class="text-sm text-gray-400 italic">Connecting to story bible on comack-server...</p>
-        <div class="pt-2">
-          <div class="flex justify-between text-xs text-gray-400 mono mb-1">
-            <span>Arc Lifespan Progress</span>
-            <span id="arcDurationText">--</span>
-          </div>
-          <div class="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
-            <div id="arcProgressBar" class="bg-indigo-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
-          </div>
-        </div>
-      </div>
+      <!-- Left Column: Display & Sneaky Radar (8 cols) -->
+      <div class="lg:col-span-8 flex flex-col space-y-6">
 
-      <!-- Sneaky Comic Radar Card (hidden while the silence gate is off) -->
-      <div id="sneakyCard" class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center space-x-2">
-            <span class="text-base font-bold">Sneaky Comic Mode</span>
-            <span id="sneakyBadge" class="text-xs mono font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400">IDLE</span>
+        <!-- Story Arc Status Card -->
+        <div class="bg-[#161922] border border-gray-800 rounded-xl p-4 flex flex-col space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs mono uppercase text-indigo-400 font-bold tracking-wider">Current Narrative Universe</span>
+            <span id="arcGenre" class="text-xs mono px-2 py-0.5 rounded bg-gray-800 text-gray-300">Loading...</span>
           </div>
-          <div class="text-xs mono text-gray-400">Strict Silence Required: <span id="reqSilence">50</span>s</div>
-        </div>
-
-        <!-- Progress Bar for Silence Countdown -->
-        <div>
-          <div class="flex justify-between text-xs mono text-gray-400 mb-1">
-            <span>Room Silence Timer</span>
-            <span><strong id="currentSilence" class="text-white">0.0</strong>s</span>
-          </div>
-          <div class="w-full bg-gray-800 rounded-full h-3 overflow-hidden p-0.5 border border-gray-700">
-            <div id="silenceProgressBar" class="bg-emerald-500 h-full rounded-full transition-all duration-300" style="width: 0%"></div>
-          </div>
-        </div>
-
-        <div id="stealthQueueAlert" class="hidden bg-amber-950/40 border border-amber-800/80 rounded-lg p-3 flex items-center justify-between">
-          <div class="flex items-center space-x-3">
-            <span class="text-xl">🤫</span>
-            <div>
-              <div class="text-xs font-bold text-amber-300">Comic <span id="pendingIssue">#000</span> Waiting in Stealth Queue!</div>
-              <div class="text-xs text-amber-400/80">Will silently refresh e-paper when room reaches complete quiet.</div>
+          <h2 id="arcTitle" class="text-lg font-bold text-white">Loading Story Arc...</h2>
+          <p id="arcPremise" class="text-sm text-gray-400 italic">Connecting to the story bible...</p>
+          <div class="pt-2">
+            <div class="flex justify-between text-xs text-gray-400 mono mb-1">
+              <span>Arc Lifespan Progress</span>
+              <span id="arcDurationText">--</span>
+            </div>
+            <div class="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
+              <div id="arcProgressBar" class="bg-indigo-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
             </div>
           </div>
-          <button onclick="forceReveal()" class="text-xs mono bg-amber-600 hover:bg-amber-500 text-black font-bold px-3 py-1.5 rounded shadow">
-            Force Reveal
-          </button>
         </div>
-      </div>
 
-      <!-- Live e-Paper Comic Viewer (800x480 aspect) -->
-      <div class="flex flex-col space-y-2">
-        <div class="flex items-center justify-between text-xs mono text-gray-400">
-          <span>reTerminal E1001 e-Paper Screen (800×480 1-bit)</span>
-          <span id="currentIssueTag">Active Issue: #---</span>
-        </div>
-        
-        <div class="epaper-frame bg-[#e2e4e9] rounded-xl p-4 flex items-center justify-center overflow-hidden border border-gray-700">
-          <img id="comicImage" src="/api/comics/current.png" alt="Current Comic Screen" 
-               class="w-full max-w-[800px] h-auto rounded border border-gray-400 shadow-md bg-white object-contain"
-               onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'800\' height=\'480\'><rect width=\'800\' height=\'480\' fill=\'white\'/><text x=\'50%27 y=\'50%27 text-anchor=\'middle\' font-size=\'24\' font-family=\'sans-serif\'>Generating initial comic...</text></svg>'">
-        </div>
-        <div class="flex justify-between items-center text-xs text-gray-500 mono pt-1">
-          <a href="/api/comics/current.bin" download="current.bin" class="hover:text-indigo-400 underline">Download Raw 1-bit EPD Buffer (.bin)</a>
-          <span id="lastRefreshedAt">Last Screen Update: --</span>
-        </div>
-      </div>
-
-      <!-- Originals of the issue shown above (only issues rendered since originals are kept) -->
-      <div id="originals" class="hidden flex flex-col space-y-2">
-        <div class="text-xs mono text-gray-400">Colour composite (before halftoning)</div>
-        <img id="colorImage" alt="Colour composite" class="w-full max-w-[800px] h-auto rounded border border-gray-700">
-        <div class="text-xs mono text-gray-400 pt-2">Raw panel art (click for full size)</div>
-        <div id="panelList" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
-      </div>
-
-    </div>
-
-    <!-- Right Column: Live Audio, Transcripts & Simulation (4 cols) -->
-    <div class="lg:col-span-4 flex flex-col space-y-6">
-
-      <!-- Audio & VAD Card -->
-      <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-4">
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-bold">Microphone Audio Stream</span>
-          <div id="vadIndicator" class="flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
-            <span class="w-2 h-2 rounded-full bg-gray-500"></span>
-            <span>SILENCE</span>
+        <!-- Sneaky Comic Radar Card (hidden while the silence gate is off) -->
+        <div id="sneakyCard" class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="text-base font-bold">Sneaky Comic Mode</span>
+              <span id="sneakyBadge" class="text-xs mono font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400">IDLE</span>
+            </div>
+            <div class="text-xs mono text-gray-400">Strict Silence Required: <span id="reqSilence">50</span>s</div>
           </div>
-        </div>
 
-        <div class="p-3 bg-gray-900/80 rounded-lg border border-gray-800 text-xs text-gray-400 space-y-1">
-          <div>• reTerminal E1001 PDM Mic streams 16kHz PCM</div>
-          <div>• Privacy: Raw speech discarded immediately</div>
-          <div>• Thematic Mining: Mined for vibes/elements, never quoted</div>
-        </div>
+          <!-- Progress Bar for Silence Countdown -->
+          <div>
+            <div class="flex justify-between text-xs mono text-gray-400 mb-1">
+              <span>Room Silence Timer</span>
+              <span><strong id="currentSilence" class="text-white">0.0</strong>s</span>
+            </div>
+            <div class="w-full bg-gray-800 rounded-full h-3 overflow-hidden p-0.5 border border-gray-700">
+              <div id="silenceProgressBar" class="bg-emerald-500 h-full rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+          </div>
 
-        <!-- Simulation Tool -->
-        <div class="border-t border-gray-800 pt-3">
-          <label class="block text-xs mono text-gray-400 mb-1">Simulate Room Speech (Test Audio):</label>
-          <div class="flex space-x-2">
-            <input id="simInput" type="text" placeholder="e.g. Can you turn off the oven before we leave?" 
-                   class="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white flex-1 focus:outline-none focus:border-indigo-500">
-            <button onclick="simulateSpeech()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-1.5 rounded font-mono">
-              Send
+          <div id="stealthQueueAlert" class="hidden bg-amber-950/40 border border-amber-800/80 rounded-lg p-3 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <span class="text-xl">🤫</span>
+              <div>
+                <div class="text-xs font-bold text-amber-300">Comic <span id="pendingIssue">#000</span> Waiting in Stealth Queue!</div>
+                <div class="text-xs text-amber-400/80">Will silently refresh e-paper when room reaches complete quiet.</div>
+              </div>
+            </div>
+            <button id="forceRevealBtn" class="text-xs mono bg-amber-600 hover:bg-amber-500 text-black font-bold px-3 py-1.5 rounded shadow">
+              Force Reveal
             </button>
           </div>
         </div>
+
+        <!-- Live e-Paper Comic Viewer (800x480 aspect) -->
+        <div class="flex flex-col space-y-2">
+          <div class="flex items-center justify-between text-xs mono text-gray-400">
+            <span>e-Paper Display (800×480 1-bit)</span>
+            <span id="currentIssueTag">Active Issue: #---</span>
+          </div>
+
+          <div class="epaper-frame bg-[#e2e4e9] rounded-xl p-4 flex items-center justify-center overflow-hidden border border-gray-700">
+            <img id="comicImage" src="/api/comics/current.png" alt="Current Comic Screen"
+                 class="w-full max-w-[800px] h-auto rounded border border-gray-400 shadow-md bg-white object-contain"
+                 onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'800\' height=\'480\'><rect width=\'800\' height=\'480\' fill=\'white\'/><text x=\'50%27 y=\'50%27 text-anchor=\'middle\' font-size=\'24\' font-family=\'sans-serif\'>Generating initial comic...</text></svg>'">
+          </div>
+          <div class="flex justify-between items-center text-xs text-gray-500 mono pt-1">
+            <a href="/api/comics/current.bin" download="current.bin" class="hover:text-indigo-400 underline">Download Raw 1-bit EPD Buffer (.bin)</a>
+            <span id="lastRefreshedAt">Last Screen Update: --</span>
+          </div>
+        </div>
+
+        <!-- Originals of the issue shown above (only issues rendered since originals are kept) -->
+        <div id="originals" class="hidden flex flex-col space-y-2">
+          <div class="text-xs mono text-gray-400">Colour composite (before halftoning)</div>
+          <img id="colorImage" alt="Colour composite" class="w-full max-w-[800px] h-auto rounded border border-gray-700">
+          <div class="text-xs mono text-gray-400 pt-2">Raw panel art (click for full size)</div>
+          <div id="panelList" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+        </div>
+
       </div>
 
-      <!-- Dialogue Feed Card -->
-      <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col flex-1 space-y-3">
+      <!-- Right Column: Live Audio, Transcripts & Simulation (4 cols) -->
+      <div class="lg:col-span-4 flex flex-col space-y-6">
+
+        <!-- Audio & VAD Card -->
+        <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-4">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-bold">Microphone Audio Stream</span>
+            <div id="vadIndicator" class="flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
+              <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+              <span>SILENCE</span>
+            </div>
+          </div>
+
+          <div class="p-3 bg-gray-900/80 rounded-lg border border-gray-800 text-xs text-gray-400 space-y-1">
+            <div>• Microphone streams 16kHz PCM to this server</div>
+            <div>• Privacy: Raw speech discarded immediately</div>
+            <div>• Thematic Mining: Mined for vibes/elements, never quoted</div>
+          </div>
+
+          <!-- Simulation Tool -->
+          <div class="border-t border-gray-800 pt-3">
+            <label class="block text-xs mono text-gray-400 mb-1">Simulate Room Speech (Test Audio):</label>
+            <div class="flex space-x-2">
+              <input id="simInput" type="text" placeholder="e.g. Can you turn off the oven before we leave?"
+                     class="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white flex-1 focus:outline-none focus:border-indigo-500">
+              <button id="sendSim" class="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-1.5 rounded font-mono">
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dialogue Feed Card -->
+        <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col flex-1 space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-bold">Mined Story Elements (30-min window)</span>
+            <span id="transcriptCount" class="text-xs mono text-gray-400">0 elements</span>
+          </div>
+
+          <div id="transcriptList" data-empty="true" class="flex-1 max-h-[360px] overflow-y-auto space-y-2 pr-1 text-xs mono">
+            <div class="text-gray-500 italic p-3 text-center">Listening for ambient room activity...</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Prompt Debug Log (server memory only; transcripts appear only after the first scramble) -->
+      <div class="lg:col-span-12 bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
         <div class="flex items-center justify-between">
-          <span class="text-sm font-bold">Mined Story Elements (30-min window)</span>
-          <span id="transcriptCount" class="text-xs mono text-gray-400">0 elements</span>
+          <span class="text-sm font-bold">Model Prompts &amp; Outputs</span>
+          <span id="promptCount" class="text-xs mono text-gray-400">0 calls</span>
         </div>
-        
-        <div id="transcriptList" class="flex-1 max-h-[360px] overflow-y-auto space-y-2 pr-1 text-xs mono">
-          <div class="text-gray-500 italic p-3 text-center">Listening for ambient room activity...</div>
-        </div>
-      </div>
-
-      <!-- Issue Archive List -->
-      <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
-        <span class="text-sm font-bold">Past Comic Issues</span>
-        <div id="historyList" class="max-h-[220px] overflow-y-auto space-y-1.5 text-xs mono">
-          <div class="text-gray-500 italic">No past issues recorded yet.</div>
+        <div id="promptList" class="max-h-[600px] overflow-y-auto space-y-1.5 text-xs mono">
+          <div class="text-gray-500 italic">No model calls in the last 15 minutes.</div>
         </div>
       </div>
 
-    </div>
+    </section>
 
-    <!-- Prompt Debug Log (server memory only; transcripts appear only after the first scramble) -->
-    <div class="lg:col-span-12 bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
-      <div class="flex items-center justify-between">
-        <span class="text-sm font-bold">Model Prompts &amp; Outputs</span>
-        <span id="promptCount" class="text-xs mono text-gray-400">0 calls</span>
+    <!-- ═══════════════ Archive view ═══════════════ -->
+    <section id="view-archive" class="hidden flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
+      <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 space-y-4">
+        <div>
+          <h2 class="text-lg font-bold text-white">Story Arcs</h2>
+          <p class="text-xs text-gray-500">Chronological arcs — click one to filter its issues; click an issue to open it in the Reader.</p>
+        </div>
+        <div id="arcTimeline" class="flex gap-3 overflow-x-auto pb-2"></div>
       </div>
-      <div id="promptList" class="max-h-[600px] overflow-y-auto space-y-1.5 text-xs mono">
-        <div class="text-gray-500 italic">No model calls in the last 15 minutes.</div>
+      <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 space-y-4">
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <h2 class="text-lg font-bold text-white">Issue Archive</h2>
+          <div id="arcFilter" class="flex flex-wrap gap-2"></div>
+        </div>
+        <div id="archiveEmpty" class="hidden text-gray-500 italic text-sm text-center py-8">No comics yet — trigger one with “Generate Comic Now” or wait for the 30-minute cycle.</div>
+        <div id="archiveGrid" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
       </div>
-    </div>
+    </section>
+
+    <!-- ═══════════════ Settings view ═══════════════ -->
+    <section id="view-settings" class="hidden flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 class="text-lg font-bold text-white">Settings</h2>
+          <p class="text-xs text-gray-500">Every server setting, grouped like <span class="mono">server/config.py</span>. Values apply immediately unless marked “restart”.</p>
+        </div>
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-2 text-xs mono text-gray-400 cursor-pointer">
+            <input id="revealSecrets" type="checkbox" class="w-4 h-4 accent-indigo-500"> reveal secrets
+          </label>
+          <button id="saveSettings" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-md transition shadow">Save Changes</button>
+        </div>
+      </div>
+      <div id="settingsNotices" class="space-y-2"></div>
+      <div id="settingsGroups" class="space-y-6"></div>
+    </section>
 
   </main>
 
-  <script>
-    let ws = null;
-    let currentComicId = null;
+  <!-- Overlays -->
+  <div id="token-prompt-root"></div>
+  <div id="onboarding-root"></div>
 
-    function initWebSocket() {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${proto}//${window.location.host}/ws/events`;
-      
-      ws = new WebSocket(url);
-      
-      ws.onopen = () => {
-        const badge = document.getElementById('connectionStatus');
-        badge.className = 'flex items-center space-x-2 text-xs mono px-3 py-1 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800';
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span><span>CONNECTED</span>';
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          handleEvent(data);
-        } catch (e) {
-          console.error('Error parsing event:', e);
-        }
-      };
-
-      ws.onclose = () => {
-        const badge = document.getElementById('connectionStatus');
-        badge.className = 'flex items-center space-x-2 text-xs mono px-3 py-1 rounded-full bg-red-950/80 text-red-400 border border-red-800';
-        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span><span>DISCONNECTED</span>';
-        setTimeout(initWebSocket, 2500);
-      };
-    }
-
-    function handleEvent(data) {
-      if (data.event === 'INIT_SNAPSHOT') {
-        updateSneakyStatus(data.sneaky_status);
-        updateArc(data.active_arc);
-        if (data.current_comic) updateComic(data.current_comic);
-      } else if (data.event === 'SNEAKY_COMIC_REFRESH') {
-        refreshComicImage(data);
-      } else if (data.event === 'NEW_COMIC_QUEUED') {
-        updateSneakyStatus(data.status);
-      } else if (data.event === 'NEW_TRANSCRIPT') {
-        addTranscriptItem(data.transcript);
-      }
-    }
-
-    function updateSneakyStatus(status) {
-      if (!status) return;
-      
-      const vadInd = document.getElementById('vadIndicator');
-      if (status.is_speaking) {
-        vadInd.className = 'flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800';
-        vadInd.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span><span>VOICE DETECTED</span>';
-      } else {
-        vadInd.className = 'flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800';
-        vadInd.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span><span>ROOM QUIET</span>';
-      }
-
-      document.getElementById('sneakyCard').classList.toggle('hidden', !status.required_silence_seconds);
-      document.getElementById('currentSilence').innerText = status.current_silence_seconds.toFixed(1);
-      document.getElementById('reqSilence').innerText = status.required_silence_seconds.toFixed(0);
-      document.getElementById('silenceProgressBar').style.width = `${status.silence_progress_pct}%`;
-
-      const alert = document.getElementById('stealthQueueAlert');
-      const badge = document.getElementById('sneakyBadge');
-      if (status.has_stealth_comic) {
-        alert.classList.remove('hidden');
-        document.getElementById('pendingIssue').innerText = `#${status.pending_series_issue ?? status.pending_issue_number}`;
-        badge.className = 'text-xs mono font-bold px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800';
-        badge.innerText = 'STEALTH HOLD';
-      } else {
-        alert.classList.add('hidden');
-        badge.className = 'text-xs mono font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400';
-        badge.innerText = 'IDLE';
-      }
-    }
-
-    function updateArc(arc) {
-      if (!arc) {   // the last arc concluded; the next comic seeds a new one
-        document.getElementById('arcTitle').innerText = 'Generating next arc';
-        document.getElementById('arcGenre').innerText = '--';
-        document.getElementById('arcPremise').innerText = 'A new story starts with the next comic.';
-        document.getElementById('arcDurationText').innerText = '--';
-        document.getElementById('arcProgressBar').style.width = '0%';
-        return;
-      }
-      document.getElementById('arcTitle').innerText = arc.title;
-      document.getElementById('arcGenre').innerText = arc.genre;
-      document.getElementById('arcPremise').innerText = `"${arc.premise}"`;
-      document.getElementById('arcDurationText').innerText = `${arc.panels_used} / ${arc.target_panels} panels`;
-      document.getElementById('arcProgressBar').style.width = `${Math.min(100, 100 * arc.panels_used / arc.target_panels)}%`;
-    }
-
-    function showOriginals(issue, panelCount) {
-      const base = `/api/comics/${issue}`;
-      const box = document.getElementById('originals');
-      const color = document.getElementById('colorImage');
-      color.onload = () => box.classList.remove('hidden');
-      color.onerror = () => box.classList.add('hidden');   // older issues have no originals
-      color.src = `${base}/color.png`;
-      document.getElementById('panelList').replaceChildren(...Array.from({ length: panelCount || 0 }, (_, i) => {
-        const a = Object.assign(document.createElement('a'), { href: `${base}/panel${i + 1}.png`, target: '_blank' });
-        const img = Object.assign(document.createElement('img'), {
-          src: a.href, alt: `Panel ${i + 1}, raw`, loading: 'lazy',
-          className: 'w-full h-auto rounded border border-gray-700' });
-        img.onerror = () => a.remove();   // procedural panels have no raw art
-        a.append(img);
-        return a;
-      }));
-    }
-
-    function updateComic(comic) {
-      showOriginals(comic.issue_number, comic.panel_count);
-      document.getElementById('currentIssueTag').innerText = `Active Issue: #${comic.series_issue ?? comic.issue_number} — ${comic.title}`;
-      document.getElementById('comicImage').src = `/api/comics/current.png?t=${Date.now()}`;
-      if (comic.displayed_at) {
-        const d = new Date(comic.displayed_at * 1000);
-        document.getElementById('lastRefreshedAt').innerText = `Last Screen Update: ${d.toLocaleTimeString()}`;
-      }
-    }
-
-    function refreshComicImage(data) {
-      showOriginals(data.issue_number, data.panel_count);
-      document.getElementById('currentIssueTag').innerText = `Active Issue: #${data.series_issue ?? data.issue_number} — ${data.title}`;
-      document.getElementById('comicImage').src = `/api/comics/current.png?t=${Date.now()}`;
-      document.getElementById('lastRefreshedAt').innerText = `Last Screen Update: ${new Date().toLocaleTimeString()} (Silent for ${data.silence_seconds}s)`;
-      loadHistory();
-    }
-
-    function addTranscriptItem(item) {
-      const list = document.getElementById('transcriptList');
-      if (list.innerHTML.includes('Listening for voice activity')) {
-        list.innerHTML = '';
-      }
-      const el = document.createElement('div');
-      el.className = 'p-2.5 rounded bg-gray-900 border border-gray-800 flex items-start space-x-2';
-      el.innerHTML = `
-        <span class="text-indigo-400 font-bold">💬</span>
-        <div class="flex-1">
-          <div class="text-gray-200">"${item.scrambled_text}"</div>
-          <div class="text-[10px] text-gray-500 mt-1">${new Date(item.timestamp * 1000).toLocaleTimeString()} • ${item.duration_seconds.toFixed(1)}s speech</div>
-        </div>
-      `;
-      list.prepend(el);
-    }
-
-    async function loadHistory() {
-      try {
-        const res = await fetch('/api/comics/history');
-        const comics = await res.json();
-        const list = document.getElementById('historyList');
-        if (comics.length === 0) return;
-        list.innerHTML = '';
-        comics.forEach(c => {
-          const row = document.createElement('div');
-          row.className = 'p-2 rounded bg-gray-900/60 hover:bg-gray-800 border border-gray-800 flex justify-between items-center cursor-pointer';
-          row.onclick = () => {
-            document.getElementById('comicImage').src = `/api/comics/${c.issue_number}/png`;
-            showOriginals(c.issue_number, c.panel_count);
-            document.getElementById('currentIssueTag').innerText = `Viewing Archive: #${c.series_issue} — ${c.title}`;
-          };
-          row.innerHTML = `
-            <div>
-              <span class="font-bold text-white">#${c.series_issue}</span> ${c.title}
-            </div>
-            <span class="text-[10px] text-gray-500">${new Date(c.created_at * 1000).toLocaleTimeString()}</span>
-          `;
-          list.appendChild(row);
-        });
-      } catch (e) {
-        console.error('Error loading history:', e);
-      }
-    }
-
-    async function triggerGenerate() {
-      try {
-        await fetch('/api/comics/generate', { method: 'POST' });
-      } catch (e) {
-        alert('Error triggering generation: ' + e);
-      }
-    }
-
-    async function forceReveal() {
-      try {
-        await fetch('/api/comics/force_reveal', { method: 'POST' });
-      } catch (e) {
-        alert('Error forcing reveal: ' + e);
-      }
-    }
-
-    async function simulateSpeech() {
-      const input = document.getElementById('simInput');
-      const text = input.value.trim();
-      if (!text) return;
-      try {
-        await fetch('/api/test/simulate_speech', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, duration: 3.2 })
-        });
-        input.value = '';
-      } catch (e) {
-        alert('Error simulating speech: ' + e);
-      }
-    }
-
-    async function loadPrompts() {
-      try {
-        const entries = await (await fetch('/api/prompts')).json();
-        const list = document.getElementById('promptList');
-        document.getElementById('promptCount').textContent = `${entries.length} calls`;
-        if (entries.length === 0) {
-          list.innerHTML = '<div class="text-gray-500 italic">No model calls in the last 15 minutes.</div>';
-          return;
-        }
-        const open = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.at));
-        list.replaceChildren(...entries.map(e => {
-          const d = document.createElement('details');
-          d.dataset.at = String(e.at);
-          d.open = open.has(d.dataset.at);
-          d.className = 'p-2 rounded bg-gray-900/60 border border-gray-800';
-          const s = document.createElement('summary');
-          s.className = 'cursor-pointer text-gray-300 truncate';
-          s.textContent = `${new Date(e.at * 1000).toLocaleTimeString()} • ${e.model} • ${e.prompt.slice(0, 90)}`;
-          d.append(s);
-          for (const [label, text] of [['SYSTEM', e.system], ['PROMPT', e.prompt], ['OUTPUT', e.output ?? '(waiting for the model…)']]) {
-            if (!text) continue;
-            const h = document.createElement('div');
-            h.className = 'text-[10px] font-bold text-indigo-400 mt-2';
-            h.textContent = label;
-            const pre = document.createElement('pre');
-            pre.className = 'whitespace-pre-wrap text-gray-200';
-            pre.textContent = text;
-            d.append(h, pre);
-          }
-          return d;
-        }));
-      } catch (e) {
-        console.error('Error loading prompts:', e);
-      }
-    }
-    setInterval(loadPrompts, 5000);
-
-    // Polling heartbeat for the silence timer and arc progress
-    setInterval(async () => {
-      try {
-        const res = await fetch('/api/status');
-        const data = await res.json();
-        updateSneakyStatus(data.sneaky);
-        updateArc(data.active_arc);
-      } catch (e) {}
-    }, 1000);
-
-    // Initial load
-    initWebSocket();
-    loadHistory();
-    loadPrompts();
-  </script>
+  <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

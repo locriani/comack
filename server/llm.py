@@ -32,11 +32,19 @@ def log_call(model: str, system: str, prompt: str) -> Dict[str, Any]:
     return entry
 
 
+def api_url(base_url: str, path: str) -> str:
+    """Join an OpenAI-compatible base URL with an API path. A base already
+    ending in /v1 is used as-is (http://host:8080/v1), otherwise /v1 is
+    inserted (http://host:8080 -> http://host:8080/v1/chat/completions)."""
+    base = base_url.rstrip('/')
+    return f"{base}/{path}" if base.endswith("/v1") else f"{base}/v1/{path}"
+
+
 async def complete_json(system_prompt: str, user_prompt: str, base_url: str = "") -> Optional[Dict[str, Any]]:
     """One chat completion asking for JSON (default: the main model). None when the call fails
     or the reply isn't JSON; callers treat that as "no output", never as a reason to fall back."""
     base = (base_url or settings.LLM_URL).rstrip('/')
-    url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
+    url = api_url(base, "chat/completions")
     payload = {
         "model": settings.LLM_MODEL or "default",
         "messages": [

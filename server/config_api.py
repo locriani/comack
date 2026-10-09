@@ -16,10 +16,11 @@ from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
 from urllib.parse import urlparse, urlunparse
 
+from dotenv import dotenv_values
 from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import ValidationError
 
-from server.config import ENV_FILE, Settings, format_validation_error, settings, suggest_alternative
+from server.config import ENV_FILE, PRESETS_DIR, Settings, format_validation_error, settings, suggest_alternative
 
 logger = logging.getLogger("comack.config_api")
 
@@ -117,6 +118,17 @@ def _masked_config(include_secrets: bool) -> dict[str, Any]:
 @router.get("/config")
 async def get_config(include_secrets: bool = Query(False, description="Reveal secret-shaped values (API keys, tokens).")):
     return {"values": _masked_config(include_secrets), "fields": _field_metadata(), "masked": not include_secrets}
+
+
+@router.get("/config/presets")
+async def get_presets():
+    """The shipped hardware-profile presets (local-gpu, external-api, cpu-only)
+    as raw value dicts, for the onboarding wizard's backend-choice prefill."""
+    presets = []
+    if PRESETS_DIR.is_dir():
+        for path in sorted(PRESETS_DIR.glob("*.env")):
+            presets.append({"name": path.stem, "values": {k: v for k, v in dotenv_values(path).items() if k}})
+    return {"presets": presets}
 
 
 @router.patch("/config")

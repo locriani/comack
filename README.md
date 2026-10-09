@@ -89,6 +89,26 @@ are persisted to `.env` so they survive the restart. A value that is also set
 as a real environment variable (systemd unit, docker-compose) keeps winning
 over `.env` — the PATCH response notes when that's the case.
 
+### Web dashboard, onboarding and access
+
+The dashboard at `/` has three views — live status, an issue archive (with a
+story-arc timeline) and a settings page over `GET/PATCH /api/config` with a
+connection test for the LLM, image backend and Whisper model. The first run
+leads with a setup wizard (LLM endpoint, Whisper model size, image backend
+with the preset table above as one-click prefill, and an explicit
+acknowledgement that the appliance captures room audio); completing it sets
+`ONBOARDED=true`. Set `ONBOARDED=false` to see the wizard again. `/reader`
+is a fullscreen comic reader with arc navigation and `#issue` deep links.
+
+**Optional access token.** Set `WEB_TOKEN` to require a bearer token for the
+browser-facing APIs (everything under `/api` plus the `/ws/events` feed); the
+dashboard HTML itself loads openly (it is just code), gets 401s from the API,
+and prompts once for the token, remembering it in the browser. Leave it empty
+(the default) for open access on a single-user network such as a tailnet.
+Device-critical paths never require the token so the appliance keeps working
+unattended: `/ws/audio` (the microphone stream), current-comic and per-issue
+image/binary reads, and static assets.
+
 ### Desktop simulator (no hardware needed)
 
 The Python simulator emulates the reTerminal: it streams audio to the server

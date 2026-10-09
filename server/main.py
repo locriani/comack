@@ -6,17 +6,20 @@ FastAPI application with WebSocket audio streaming, real-time VAD,
 import re
 import time
 import json
+import socket
 import asyncio
 import logging
 from pathlib import Path
 from typing import Set, Dict, Any, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from contextlib import asynccontextmanager
 
+from server.auth import authorized
 from server.config import settings, warn_on_unknown_env, COMICS_DIR, STATIC_DIR
 from server.config_api import router as config_router
+from server.config_test import router as config_test_router
 from server.storage import db
 from server.audio.vad import AudioVAD, SpeechSegment
 from server.audio.transcriber import Transcriber, TriggerListener
@@ -263,6 +266,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Comack", lifespan=lifespan)
 app.include_router(config_router)
+app.include_router(config_test_router)
+
+
+@app.middleware("http")
+async def bearer_auth_middleware(request: Request, call_next):
+    """Optional WEB_TOKEN gate for browser-facing surfaces (server/auth.py owns the split:
+    device audio, comic reads and static assets stay tokenless)."""
+    if not authorized(request.url.path, request.headers.get("authorization"), request.query_params.get("token")):
+        return JSONResponse(
+            {"detail": "Unauthorized: this server requires the WEB_TOKEN bearer token."},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await call_next(request)
 
 
 # --- Static and Web UI ---
@@ -306,7 +323,12 @@ async def ws_audio_stream(websocket: WebSocket):
 async def ws_events(websocket: WebSocket):
     """
     Subscribes reTerminal E1001 and Web UI to status updates and sneaky refresh events.
+    With WEB_TOKEN set, the browser event feed appends ?token= (WebSocket clients
+    cannot send headers); the tokenless hardware uses /ws/audio instead.
     """
+    if not authorized(websocket.url.path, websocket.headers.get("authorization"), websocket.query_params.get("token")):
+        await websocket.close(code=4401)
+        return
     await websocket.accept()
     event_subscribers.add(websocket)
     
@@ -345,6 +367,11 @@ async def get_system_status():
     return {
         "status": "online",
         "timestamp": time.time(),
+        "identity": {
+            "hostname": socket.gethostname(),
+            "port": settings.PORT,
+            "display": f"{settings.DISPLAY_WIDTH}×{settings.DISPLAY_HEIGHT} e-paper",
+        },
         "active_arc": arc,
         "current_comic": current,
         "sneaky": sneaky,

@@ -133,3 +133,27 @@ def test_patch_notes_env_shadowed_values(client, isolated, monkeypatch):
     monkeypatch.setenv("WHISPER_DEVICE", "cuda")
     body = client.patch("/api/config", json={"WHISPER_DEVICE": "cpu"}).json()
     assert any("WHISPER_DEVICE" in note and "environment" in note for note in body["notes"])
+
+
+def test_onboarding_flag_applies_and_persists(client, isolated):
+    assert client.get("/api/config").json()["values"]["ONBOARDED"] is False
+    resp = client.patch("/api/config", json={"ONBOARDED": True})
+    assert resp.status_code == 200
+    assert resp.json()["results"] == {"ONBOARDED": "applied"}  # hot field: no restart needed
+    assert settings.ONBOARDED is True
+    assert "ONBOARDED=True" in isolated.read_text()
+
+
+def test_onboarding_flag_is_not_masked_as_secret(client):
+    body = client.get("/api/config").json()
+    assert body["values"]["ONBOARDED"] is False
+    assert body["fields"]["ONBOARDED"]["secret"] is False
+
+
+def test_presets_endpoint_lists_shipped_profiles(client):
+    body = client.get("/api/config/presets").json()
+    by_name = {p["name"]: p["values"] for p in body["presets"]}
+    assert set(by_name) == {"cpu-only", "external-api", "local-gpu"}
+    assert by_name["local-gpu"]["FLUX_DEVICE"] == "cuda"
+    assert by_name["external-api"]["FLUX_API_URL"]
+    assert by_name["cpu-only"]["WHISPER_DEVICE"] == "cpu"

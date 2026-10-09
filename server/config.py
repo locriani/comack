@@ -25,6 +25,7 @@ DATA_DIR = BASE_DIR / "data"
 COMICS_DIR = DATA_DIR / "comics"
 AUDIO_DIR = DATA_DIR / "audio"
 STATIC_DIR = BASE_DIR / "server" / "web" / "static"
+PRESETS_DIR = BASE_DIR / "presets"
 
 COMICS_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -107,6 +108,12 @@ class Settings(BaseSettings):
     # ── Story arcs ────────────────────────────────────────────────────────
     ARC_MIN_PANELS: int = Field(12, ge=1, le=120, description="Narrative arc length lower bound, in panels.")
     ARC_MAX_PANELS: int = Field(60, ge=1, le=120, description="Narrative arc length upper bound, in panels.")
+
+    # ── Dashboard & access ─────────────────────────────────────────────────
+    ONBOARDED: bool = Field(
+        False, description="Set automatically when the dashboard's first-run wizard completes. Set to false to see it again.")
+    WEB_TOKEN: str = Field(
+        "", description="Optional bearer token for browser-facing endpoints (dashboard, /api, /ws/events). Empty = open access (assumes a single-user network like a tailnet). Device-critical paths (/ws/audio, comic image/binary reads) always stay open so the hardware keeps working. When set, the dashboard prompts once for the token.")
 
     # ── Image generation (local diffusers or external API) ────────────────
     FLUX_MODEL_ID: str = Field(
