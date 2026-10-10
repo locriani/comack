@@ -1,11 +1,12 @@
 //! A minimal RFC 6455 client: upgrade handshake, masked binary frames out,
 //! ping answered with pong. Enough for the server's `/ws/audio`.
 
-use core::fmt::Write as _;
+use core::fmt::{self, Write as _};
 use core::net::SocketAddrV4;
 use core::time::Duration;
 
 use super::buf::SliceWriter;
+use super::identity::{DeviceIdentity, IdentityPath};
 use super::net::{HostResolver, NetError, ServerLocator, TcpConnector, TcpStream};
 use crate::application::ports::{AudioSession, AudioUplink};
 
@@ -80,7 +81,9 @@ pub fn encode_client_header(
     len
 }
 
-/// Format the upgrade request into `out`.
+/// Format the upgrade request into `out`. The `path` is rendered by
+/// [`Display`](fmt::Display), so an identity-aware path (see `IdentityPath`)
+/// lands in the request line as-is.
 ///
 /// # Errors
 /// [`WsError::RequestTooLarge`] if it does not fit.
@@ -88,7 +91,7 @@ pub fn write_handshake(
     out: &mut [u8],
     host: &str,
     port: u16,
-    path: &str,
+    path: impl fmt::Display,
 ) -> Result<usize, WsError> {
     let mut w = SliceWriter::new(out);
     write!(
@@ -166,7 +169,7 @@ impl<S: TcpStream> WebSocket<S> {
         connector: &C,
         addr: SocketAddrV4,
         host: &str,
-        path: &str,
+        path: impl fmt::Display,
         config: WsConfig,
     ) -> Result<Self, WsError>
     where
@@ -259,12 +262,14 @@ impl<S: TcpStream> AudioSession for WebSocket<S> {
 }
 
 /// [`AudioUplink`] that opens a WebSocket to the server's audio endpoint,
-/// locating the server afresh on every attempt.
+/// locating the server afresh on every attempt and presenting the device's
+/// identity on the handshake.
 pub struct WebSocketUplink<'a, C, R> {
     connector: C,
     locator: ServerLocator<'a, R>,
     port: u16,
     path: &'a str,
+    identity: DeviceIdentity<'a>,
     config: WsConfig,
 }
 
@@ -273,12 +278,16 @@ where
     C: TcpConnector,
     R: HostResolver,
 {
-    /// Stream to `path` on the located server's `port`.
+    /// Stream to `path` on the located server's `port`, presenting
+    /// `identity` as `?device_id=&device_token=` on the handshake —
+    /// [`DeviceIdentity::NONE`] keeps the tokenless wire behavior, which
+    /// the server binds to its `default` device.
     pub const fn new(
         connector: C,
         locator: ServerLocator<'a, R>,
         port: u16,
         path: &'a str,
+        identity: DeviceIdentity<'a>,
         config: WsConfig,
     ) -> Self {
         Self {
@@ -286,6 +295,7 @@ where
             locator,
             port,
             path,
+            identity,
             config,
         }
     }
@@ -301,11 +311,15 @@ where
 
     fn open(&mut self) -> Result<Self::Session, WsError> {
         let ip = self.locator.locate().ok_or(WsError::Unresolved)?;
+        let path = IdentityPath {
+            base: self.path,
+            identity: &self.identity,
+        };
         WebSocket::connect(
             &self.connector,
             SocketAddrV4::new(ip, self.port),
             self.locator.host(),
-            self.path,
+            path,
             self.config,
         )
     }
@@ -520,14 +534,45 @@ mod tests {
     fn uplink_locates_server_then_connects() {
         let c = ScriptedConnector::replying(&[ACCEPT]);
         let locator = ServerLocator::new(Fixed(Some(*ADDR.ip())), "localhost");
-        let mut uplink =
-            WebSocketUplink::new(c.clone(), locator, 8000, "/ws/audio", WsConfig::default());
+        let mut uplink = WebSocketUplink::new(
+            c.clone(),
+            locator,
+            8000,
+            "/ws/audio",
+            DeviceIdentity::NONE,
+            WsConfig::default(),
+        );
         assert!(uplink.open().is_ok());
         assert_eq!(c.0.borrow().connects[0].0, ADDR);
+        assert!(
+            c.sent().starts_with(b"GET /ws/audio HTTP/1.1\r\n"),
+            "tokenless uplink keeps the bare handshake"
+        );
         assert!(c
             .sent()
             .windows(22)
             .any(|w| w == b"Host: localhost:8000\r\n"));
+    }
+
+    #[test]
+    fn uplink_presents_the_device_identity() {
+        let c = ScriptedConnector::replying(&[ACCEPT]);
+        let locator = ServerLocator::new(Fixed(Some(*ADDR.ip())), "localhost");
+        let mut uplink = WebSocketUplink::new(
+            c.clone(),
+            locator,
+            8000,
+            "/ws/audio",
+            DeviceIdentity {
+                device_id: "living-room",
+                device_token: "t0ken",
+            },
+            WsConfig::default(),
+        );
+        assert!(uplink.open().is_ok());
+        assert!(c
+            .sent()
+            .starts_with(b"GET /ws/audio?device_id=living-room&device_token=t0ken HTTP/1.1\r\n"));
     }
 
     #[test]
@@ -538,9 +583,101 @@ mod tests {
             locator,
             8000,
             "/",
+            DeviceIdentity::NONE,
             WsConfig::default(),
         );
         assert_eq!(uplink.open().err(), Some(WsError::Unresolved));
+    }
+
+    #[test]
+    fn handshake_carries_the_device_identity() {
+        let identity = DeviceIdentity {
+            device_id: "living-room",
+            device_token: "t0ken",
+        };
+        let mut buf = [0u8; 256];
+        let n = write_handshake(
+            &mut buf,
+            "localhost",
+            8000,
+            IdentityPath {
+                base: "/ws/audio",
+                identity: &identity,
+            },
+        )
+        .unwrap();
+        let text = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(
+            text.starts_with("GET /ws/audio?device_id=living-room&device_token=t0ken HTTP/1.1\r\n")
+        );
+        assert!(text.ends_with("Sec-WebSocket-Version: 13\r\n\r\n"));
+    }
+
+    #[test]
+    fn a_tokenless_handshake_stays_bare() {
+        let mut buf = [0u8; 256];
+        let n = write_handshake(
+            &mut buf,
+            "localhost",
+            8000,
+            IdentityPath {
+                base: "/ws/audio",
+                identity: &DeviceIdentity::NONE,
+            },
+        )
+        .unwrap();
+        let text = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(text.starts_with("GET /ws/audio HTTP/1.1\r\n"));
+        assert!(!text.contains("device_id"), "no query at all");
+    }
+
+    #[test]
+    fn a_partial_identity_is_sent_as_presented() {
+        // An id without its token goes out as-is and the server rejects it;
+        // the firmware never silently downgrades a broken identity to
+        // tokenless.
+        let identity = DeviceIdentity {
+            device_id: "living-room",
+            device_token: "",
+        };
+        let mut buf = [0u8; 256];
+        let n = write_handshake(
+            &mut buf,
+            "localhost",
+            8000,
+            IdentityPath {
+                base: "/ws/audio",
+                identity: &identity,
+            },
+        )
+        .unwrap();
+        let text = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(text.starts_with("GET /ws/audio?device_id=living-room&device_token= HTTP/1.1\r\n"));
+    }
+
+    #[test]
+    fn an_identity_path_that_wont_fit_fails_cleanly() {
+        // An over-long rendering must surface as RequestTooLarge — never
+        // truncated (a severed token) and never silently downgraded to the
+        // bare path. The same buffer holds the tokenless handshake fine.
+        let none = IdentityPath {
+            base: "/ws/audio",
+            identity: &DeviceIdentity::NONE,
+        };
+        assert!(write_handshake(&mut [0u8; 180], "localhost", 8000, none).is_ok());
+
+        let identity = DeviceIdentity {
+            device_id: "living-room",
+            device_token: "t0ken",
+        };
+        let path = IdentityPath {
+            base: "/ws/audio",
+            identity: &identity,
+        };
+        assert_eq!(
+            write_handshake(&mut [0u8; 180], "localhost", 8000, path),
+            Err(WsError::RequestTooLarge)
+        );
     }
 
     proptest! {

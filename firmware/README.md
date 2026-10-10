@@ -222,22 +222,37 @@ flag surface mirrors the manual flow documented above.
 ## Device configuration
 
 At boot the device resolves one `DeviceConfig`: the Wi-Fi networks to join
-(primary first), the server host and port, the device name, and the Tailscale
-auth key.
+(primary first), the server host and port, the device name, the device
+identity, and the Tailscale auth key.
 
 1. **Stored configuration first.** The `NvsDeviceConfigStore` adapter reads
    the `device_config` blob in the `comack` NVS namespace. The on-device
    setup portal writes it (see "Provisioning a device" above); until then
    the namespace is simply empty.
 2. **Compile-time fallback.** With nothing stored — or the store unreadable —
-   the build's `secrets.rs` (networks, Tailscale key) and `config.rs`
-   constants (`localhost`, port 8000, `comack-display`) apply, with a
-   logged reason. Already-flashed devices therefore boot exactly as before,
-   and `secrets.rs` stays supported.
+   the build's `secrets.rs` (networks, device identity, Tailscale key) and
+   `config.rs` constants (`localhost`, port 8000, `comack-display`) apply,
+   with a logged reason. Already-flashed devices therefore boot exactly as
+   before, and `secrets.rs` stays supported.
 
 Both paths run through the same bounded type (`comack_core::domain`:
 `DeviceConfig`, at most 5 networks) and the same `DeviceConfigStore` port,
 so the store is an in-memory fake in the host tests.
+
+### Device identity on the wire
+
+The identity pair (`device_id` + `device_token`, both empty until
+configured) rides on the identity-aware server requests — the audio
+WebSocket handshake (`GET /ws/audio`), the comic poll
+(`GET /api/comics/current`), and the trigger (`POST /api/trigger`) — as
+`?device_id=&device_token=` query parameters, matching the server's device
+registry (`server/devices.py`). Empty values keep the pre-identity wire
+behavior: the request lines stay bare and the server binds the device to
+its auto `default` device. An id without its matching token goes out as-is
+and is rejected server-side — never silently downgraded. The per-issue
+frame fetch (`GET /api/comics/{n}/bin`) deliberately carries no identity:
+issue numbers are a global namespace and the tailnet is the trust
+boundary.
 
 ### Verification notes
 

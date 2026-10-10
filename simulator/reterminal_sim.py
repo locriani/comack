@@ -6,6 +6,10 @@ Emulates the reTerminal E1001 on macOS/Linux:
 - Reacts to 'SNEAKY_COMIC_REFRESH' events
 - Puts the device's three front buttons on the keyboard: ←/→ (or b/f) page
   through revealed issues, g (or space) is the green trigger
+- Presents device identity on the audio stream and the current.png poll when
+  launched with --device-id/--device-token, and acts only on its own
+  SNEAKY_COMIC_REFRESH tag; without the flags it is the tokenless 'default'
+  device, byte-identical to previous releases (spec D6)
 """
 import sys
 import time
@@ -17,6 +21,7 @@ import argparse
 import queue
 import threading
 import urllib.request
+from urllib.parse import urlencode
 from pathlib import Path
 from io import BytesIO
 from PIL import Image
@@ -25,6 +30,54 @@ try:
     import websockets
 except ImportError:
     websockets = None
+
+
+# --- Device identity (spec D6): query-parameter transport, own-tag filtering ---
+
+DEFAULT_DEVICE_ID = "default"  # mirrors server.storage: tokenless clients bind here
+
+
+def with_device_identity(url: str, device_id: str | None, device_token: str | None) -> str:
+    """A request URL carrying this simulator's device identity.
+
+    Query parameters are the one transport both a browser WebSocket and the
+    firmware's raw request line can carry (spec D2), so the simulator uses
+    them too. Three shapes, mirroring the server's resolve_device contract:
+    no identity returns the URL byte-identical to the tokenless form, a full
+    pair is appended (after any existing query string, e.g. the current.png
+    cache-buster), and a partial pair is presented as-is — the server rejects
+    what it cannot bind (4401/401); the simulator never completes or
+    downgrades a partial presentation.
+    """
+    if not device_id and not device_token:
+        return url
+    params = urlencode([(name, value) for name, value in
+                        (("device_id", device_id), ("device_token", device_token)) if value])
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{params}"
+
+
+def current_png_url(server_base: str, device_id: str | None, device_token: str | None,
+                    cache_buster: float) -> str:
+    """The display poll's request line: current.png with its cache-buster,
+    then the device identity when presented."""
+    return with_device_identity(f"{server_base}/api/comics/current.png?t={cache_buster}",
+                                device_id, device_token)
+
+
+def is_own_refresh(event: dict, device_id: str | None) -> bool:
+    """Does this SNEAKY_COMIC_REFRESH belong to this simulator's device?
+
+    The server tags every reveal with the device it revealed for, and a wall
+    must flash only for its own room (spec criterion 6). A tokenless
+    simulator is the auto 'default' device, so that is the tag it acts on. An
+    event with no device_id predates device tagging — acted on, so an older
+    server keeps driving the display exactly as before.
+    """
+    tag = event.get("device_id")
+    if tag is None:
+        return True
+    return tag == (device_id or DEFAULT_DEVICE_ID)
 
 
 def generate_audio_chunk(sample_rate: int = 16000, duration: float = 0.1, is_speech: bool = False) -> bytes:
@@ -54,9 +107,10 @@ def generate_audio_chunk(sample_rate: int = 16000, duration: float = 0.1, is_spe
     return struct.pack(f"<{len(samples)}h", *samples)
 
 
-async def audio_streamer_task(server_url: str, simulate_speech_interval: float = 25.0):
+async def audio_streamer_task(server_url: str, simulate_speech_interval: float = 25.0,
+                              device_id: str | None = None, device_token: str | None = None):
     """Streams continuous 16kHz PCM audio to the server."""
-    ws_url = f"{server_url}/ws/audio"
+    ws_url = with_device_identity(f"{server_url}/ws/audio", device_id, device_token)
     print(f"[Sim Audio] Connecting to {ws_url}...")
     
     while True:
@@ -78,8 +132,9 @@ async def audio_streamer_task(server_url: str, simulate_speech_interval: float =
             await asyncio.sleep(2.0)
 
 
-async def event_listener_task(server_url: str, on_refresh=None):
-    """Listens for SNEAKY_COMIC_REFRESH events and updates display."""
+async def event_listener_task(server_url: str, on_refresh=None, device_id: str | None = None):
+    """Listens for SNEAKY_COMIC_REFRESH events and updates display. Reveals
+    tagged for another device are ignored (is_own_refresh)."""
     ws_url = f"{server_url}/ws/events"
     print(f"[Sim EPD] Connecting to {ws_url}...")
     
@@ -90,7 +145,7 @@ async def event_listener_task(server_url: str, on_refresh=None):
                 while True:
                     msg = await ws.recv()
                     data = json.loads(msg)
-                    if data.get("event") == "SNEAKY_COMIC_REFRESH":
+                    if data.get("event") == "SNEAKY_COMIC_REFRESH" and is_own_refresh(data, device_id):
                         print(f"\n[Sim EPD] *** SNEAKY REFRESH TRIGGERED! Issue #{data.get('issue_number')} ***")
                         print(f"Room was silent for {data.get('silence_seconds')}s.")
                         if on_refresh:
@@ -211,7 +266,8 @@ class PressQueue:
                 print(f"[Sim Buttons] Press handling failed: {e}")
 
 
-def run_gui_simulator(server_host: str, server_port: int):
+def run_gui_simulator(server_host: str, server_port: int,
+                      device_id: str | None = None, device_token: str | None = None):
     """Run interactive GUI window simulating the 800x480 e-paper."""
     import tkinter as tk
     from PIL import ImageTk
@@ -243,7 +299,7 @@ def run_gui_simulator(server_host: str, server_port: int):
     
     def fetch_current_image():
         try:
-            url = f"{server_base}/api/comics/current.png?t={time.time()}"
+            url = current_png_url(server_base, device_id, device_token, cache_buster=time.time())
             with urllib.request.urlopen(url, timeout=4) as resp:
                 img_data = resp.read()
                 pil_img = Image.open(BytesIO(img_data)).convert("RGB")
@@ -387,8 +443,8 @@ def run_gui_simulator(server_host: str, server_port: int):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         ws_base = f"ws://{server_host}:{server_port}"
-        loop.create_task(audio_streamer_task(ws_base))
-        loop.create_task(event_listener_task(ws_base, on_refresh=on_refresh_event))
+        loop.create_task(audio_streamer_task(ws_base, device_id=device_id, device_token=device_token))
+        loop.create_task(event_listener_task(ws_base, on_refresh=on_refresh_event, device_id=device_id))
         loop.run_forever()
 
     def on_refresh_event(event_data):
@@ -410,14 +466,18 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="localhost", help="Comack server host")
     parser.add_argument("--port", type=int, default=8000, help="Comack server port")
     parser.add_argument("--headless", action="store_true", help="Run without GUI (audio stream only)")
+    parser.add_argument("--device-id", default=None,
+                        help="Device id issued by the server's settings page (omit both flags for the tokenless default device)")
+    parser.add_argument("--device-token", default=None,
+                        help="The device token shown once at creation — pass it whenever --device-id is passed")
     args = parser.parse_args()
-    
+
     if args.headless:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         ws_base = f"ws://{args.host}:{args.port}"
-        loop.create_task(audio_streamer_task(ws_base))
-        loop.create_task(event_listener_task(ws_base))
+        loop.create_task(audio_streamer_task(ws_base, device_id=args.device_id, device_token=args.device_token))
+        loop.create_task(event_listener_task(ws_base, device_id=args.device_id))
         loop.run_forever()
     else:
-        run_gui_simulator(args.host, args.port)
+        run_gui_simulator(args.host, args.port, device_id=args.device_id, device_token=args.device_token)

@@ -55,24 +55,8 @@
       <!-- Left Column: Display & Sneaky Radar (8 cols) -->
       <div class="lg:col-span-8 flex flex-col space-y-6">
 
-        <!-- Story Arc Status Card -->
-        <div class="bg-[#161922] border border-gray-800 rounded-xl p-4 flex flex-col space-y-2">
-          <div class="flex items-center justify-between">
-            <span class="text-xs mono uppercase text-indigo-400 font-bold tracking-wider">Current Narrative Universe</span>
-            <span id="arcGenre" class="text-xs mono px-2 py-0.5 rounded bg-gray-800 text-gray-300">Loading...</span>
-          </div>
-          <h2 id="arcTitle" class="text-lg font-bold text-white">Loading Story Arc...</h2>
-          <p id="arcPremise" class="text-sm text-gray-400 italic">Connecting to the story bible...</p>
-          <div class="pt-2">
-            <div class="flex justify-between text-xs text-gray-400 mono mb-1">
-              <span>Arc Lifespan Progress</span>
-              <span id="arcDurationText">--</span>
-            </div>
-            <div class="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
-              <div id="arcProgressBar" class="bg-indigo-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
-            </div>
-          </div>
-        </div>
+        <!-- Story Arc Cards: one per device, labeled with its room -->
+        <div id="arcCards" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
 
         <!-- Sneaky Comic Radar Card (hidden while the silence gate is off) -->
         <div id="sneakyCard" class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
@@ -186,6 +170,15 @@
 
       </div>
 
+      <!-- Devices: one card per registered device, each with its own current comic -->
+      <div class="lg:col-span-12 flex flex-col space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-bold">Devices</span>
+          <span id="deviceCount" class="text-xs mono text-gray-400">0 registered</span>
+        </div>
+        <div id="deviceCards" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+      </div>
+
       <!-- Prompt Debug Log (server memory only; transcripts appear only after the first scramble) -->
       <div class="lg:col-span-12 bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
         <div class="flex items-center justify-between">
@@ -211,7 +204,10 @@
       <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 space-y-4">
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <h2 class="text-lg font-bold text-white">Issue Archive</h2>
-          <div id="arcFilter" class="flex flex-wrap gap-2"></div>
+          <div class="flex flex-col items-end gap-2">
+            <div id="deviceFilter" class="flex flex-wrap gap-2"></div>
+            <div id="arcFilter" class="flex flex-wrap gap-2"></div>
+          </div>
         </div>
         <div id="archiveEmpty" class="hidden text-gray-500 italic text-sm text-center py-8">No comics yet — trigger one with “Generate Comic Now” or wait for the 30-minute cycle.</div>
         <div id="archiveGrid" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
@@ -233,6 +229,8 @@
         </div>
       </div>
       <div id="settingsNotices" class="space-y-2"></div>
+      <!-- Devices: the registry behind per-device identity — add (token shown once), rename, last-seen -->
+      <div id="devicesCard" class="bg-[#161922] border border-gray-800 rounded-xl p-5 space-y-4"></div>
       <div id="settingsGroups" class="space-y-6"></div>
     </section>
 

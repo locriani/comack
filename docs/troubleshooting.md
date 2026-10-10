@@ -124,20 +124,25 @@ light install):
 
 The device connects *out* to the server; check the server side first:
 
-1. **Connected devices.** `GET /api/devices` lists every live WebSocket
-   connection the server holds — the device's audio stream, dashboard event
-   subscribers — with the peer IP, when it connected, and the last time it
-   sent traffic:
+1. **Connected devices.** `GET /api/devices` lists the registered devices
+   (each with its id, name, and last-seen) with their live connections —
+   the device's audio stream, attributed to the device it authenticated as —
+   plus any `unregistered_connections` (dashboard event subscribers, which
+   present no device identity):
 
    ```bash
    curl -H "Authorization: Bearer $WEB_TOKEN" http://<server>:8000/api/devices
    ```
 
-   (Omit the header when `WEB_TOKEN` is unset.) The device's stream shows up
-   as `audio streamer` while it streams; an empty list means the device has
-   no connection at all — go to step 2.
+   (Omit the header when `WEB_TOKEN` is unset.) A tokenless device's stream
+   shows up under the auto `default` device as `audio streamer` while it
+   streams; empty `connections` on every device and an empty
+   `unregistered_connections` means the device has no connection at all — go
+   to step 2. A device presenting an unknown id or a wrong token is closed
+   with `4401` before it is ever accepted (a mistyped token is never silently
+   treated as the `default` device).
 2. **Server log.** A successful device stream logs
-   `reTerminal E1001 audio streamer connected.` on `/ws/audio`. Absent line =
+   `reTerminal E1001 audio streamer connected: device '<id>'.` on `/ws/audio`. Absent line =
    the device isn't reaching the server (wrong `HOST:PORT`, different
    network, Tailscale down).
 3. **Event feed.** Display refreshes ride `/ws/events`; the simulator and

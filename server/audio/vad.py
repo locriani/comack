@@ -19,6 +19,7 @@ class SpeechSegment:
     pcm_bytes: bytes
     timestamp: float
     duration_seconds: float
+    device_id: Optional[str] = None  # which device's pipeline heard this; None = unattributed (a bare VAD)
 
 
 class AudioVAD:
@@ -27,18 +28,23 @@ class AudioVAD:
                  energy_threshold: float = 650.0,
                  speech_pad_seconds: float = 0.8,
                  on_speech_segment: Optional[Callable[[SpeechSegment], None]] = None,
-                 max_segment_seconds: float = 10.0):
+                 max_segment_seconds: float = 10.0,
+                 device_id: Optional[str] = None):
         """
         :param sample_rate: Sample rate in Hz (default 16000)
         :param energy_threshold: Minimum RMS energy for speech (approx 500-1500 for 16-bit PCM)
         :param speech_pad_seconds: Trailing silence duration before finalizing a speech segment
         :param on_speech_segment: Callback when a speech segment is finalized
+        :param device_id: Stamped onto every emitted segment, so each room's speech is
+            attributable downstream. One VAD per device: the adaptive noise floor and
+            the silence clock below must learn a single room, never two at once.
         """
         self.sample_rate = sample_rate
         self.energy_threshold = energy_threshold
         self.speech_pad_seconds = speech_pad_seconds
         self.on_speech_segment = on_speech_segment
         self.max_segment_seconds = max_segment_seconds
+        self.device_id = device_id
         
         # Live state
         self.is_speaking = False
@@ -138,7 +144,8 @@ class AudioVAD:
             self.on_speech_segment(SpeechSegment(
                 pcm_bytes=total_bytes,
                 timestamp=self._segment_start_time or (now - total_duration),
-                duration_seconds=total_duration
+                duration_seconds=total_duration,
+                device_id=self.device_id
             ))
         self._speech_buffer = []
         self._segment_start_time = now

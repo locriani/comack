@@ -62,6 +62,8 @@ mod tests {
                 port: 8000,
             },
             "comack-display",
+            "",
+            "",
             "tskey-auth-fallback",
         )
         .unwrap()
@@ -77,6 +79,8 @@ mod tests {
                 port: 9000,
             },
             "kitchen-display",
+            "kitchen-display",
+            "tok-stored",
             "tskey-auth-stored",
         )
         .unwrap()

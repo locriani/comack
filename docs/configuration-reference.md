@@ -46,6 +46,46 @@ Grouped like `.env.example`.
 | `ONBOARDED` | bool | `false` | — | hot | Set automatically when the dashboard's first-run wizard completes. Set to false to see it again. |
 | `WEB_TOKEN` | str | `""` | — | hot | Optional bearer token for browser-facing endpoints. Empty = open access (assumes a single-user network like a tailnet). See [the exact auth split](self-hosting.md#access-token-web_token) in self-hosting. |
 
+## Devices & identity (no settings)
+
+Multiple displays can share one server — each device gets its own audio
+pipeline, story arc, pacing state, and current comic. Device identity is a
+database record, not a configuration variable: there is deliberately nothing
+to set here.
+
+- **Registration.** Create devices on the dashboard's settings page (Devices
+  card) or `POST /api/devices {"name": "Living Room"}`. The response shows
+  the device's `id` and `token` exactly once — the token is stored hashed
+  and compared constant-time. `PATCH /api/devices/<id>` renames; `GET
+  /api/devices` lists devices with their live connection count and
+  last-seen time.
+- **On the wire.** A client presents identity as query parameters —
+  `?device_id=<id>&device_token=<token>` — on `/ws/audio`, the
+  `current`-comic reads, and `/api/trigger` (the same transport the event
+  feed's `?token=` already uses; browser and firmware clients cannot set
+  headers). Three outcomes, no exceptions: a valid pair binds the
+  connection to that device; **no** identity binds the auto-created
+  `default` device, so pre-existing deployments and tokenless clients keep
+  working unchanged; a **wrong** id or token is rejected — HTTP 401 on the
+  read endpoints, and the audio WebSocket refuses the connection (close
+  code `4401`; a raw client sees the pre-accept denial as HTTP 403).
+  Wrong identity never falls back to `default`.
+- **Scoped vs shared.** Per device: VAD (noise floor + silence clock),
+  trigger window, transcript batch, story arc, pacing key, dispatcher
+  slot, and the displayed-comic pointer — each room hears, grows, and
+  shows its own comic. Shared: the Whisper model, LLM and image settings,
+  the global issue-number sequence (per-arc `series_issue` is what a
+  device's banner shows), and the GPU generation lock, which serializes
+  any two devices that come due at once.
+- **Upgrades.** On first boot after upgrading, every pre-existing arc,
+  transcript, and comic is backfilled to the `default` device. No files
+  move and no setting changes; a single-device deployment behaves exactly
+  as before.
+
+Clients carry the pair as build-time constants (firmware: `DEVICE_ID` /
+`DEVICE_TOKEN` in `crates/comack-core/src/config.rs`) or CLI flags
+(simulator: `--device-id` / `--device-token`; absent = legacy behavior).
+
 ## LLM (OpenAI-compatible)
 
 | Setting | Type | Default | Bounds | Restart | Meaning |
@@ -169,3 +209,7 @@ behavior; masking). The paired-bound validators, masking, unknown-var
 warnings, and the `applied` / `restart_required` PATCH responses were
 exercised live on a running server, as were `GET /api/config` and the
 settings page. `.env.example` was diffed against this table field by field.
+The devices section was verified against the multi-device branch: the three
+identity outcomes and the scoped/shared split are pinned by
+`tests/test_two_device_acceptance.py` and were exercised live with two
+simulators streaming against one server.

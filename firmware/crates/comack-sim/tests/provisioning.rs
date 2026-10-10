@@ -12,7 +12,9 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use comack_core::adapters::{HttpClient, HttpComicService, HttpConfig, ServerLocator};
+use comack_core::adapters::{
+    DeviceIdentity, HttpClient, HttpComicService, HttpConfig, ServerLocator,
+};
 use comack_core::application::ports::{ComicSource, DeviceConfigStore};
 use comack_core::domain::{Issue, SSID_MAX_LEN};
 use comack_sim::{ProvisioningServer, StdConnector, SystemResolver};
@@ -109,6 +111,9 @@ fn a_valid_submission_saves_and_the_connector_dials_the_configured_host() {
     let mut comics = HttpComicService::new(
         HttpClient::new(StdConnector, "127.0.0.1", server.port, http_config),
         ip,
+        // Provisioning issues no identity, so the poll is the tokenless
+        // bare path the server binds to its `default` device.
+        DeviceIdentity::NONE,
     );
     assert_eq!(comics.latest_issue(), Ok(Issue::new(7)));
     assert!(server

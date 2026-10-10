@@ -8,30 +8,34 @@ import asyncio
 import logging
 from typing import Optional, Dict, Any, Callable, List
 from server.config import settings
-from server.storage import db
+from server.storage import DEFAULT_DEVICE_ID, db
 from server.audio.vad import AudioVAD
 
 logger = logging.getLogger("comack.sneaky")
 
 
 class SneakyDispatcher:
-    def __init__(self, vad: AudioVAD, on_dispatch: Optional[Callable[[Dict[str, Any]], None]] = None):
+    def __init__(self, vad: AudioVAD, device_id: str = DEFAULT_DEVICE_ID,
+                 on_dispatch: Optional[Callable[[Dict[str, Any]], None]] = None):
         self.vad = vad
+        self.device_id = device_id  # the only slot this dispatcher may fill or release
         self.on_dispatch = on_dispatch
         self.pending_comic: Optional[Dict[str, Any]] = None
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
     def start(self):
-        """Start the background silence monitoring loop."""
-        if not self._running:
-            self._running = True
-            # Load any existing stealth hold comic from database
-            held = db.get_stealth_hold_comic()
-            if held:
-                self.pending_comic = held
-                logger.info(f"Loaded pending stealth comic #{held['issue_number']} from database.")
-            self._task = asyncio.create_task(self._monitor_loop())
+        """Arm the background silence-monitoring loop. A no-op when already
+        running, or when no event loop is live (sync callers drive the loop
+        themselves); the next queued comic re-arms it."""
+        if self._running:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._running = True
+        self._task = asyncio.create_task(self._monitor_loop())
 
     def stop(self):
         self._running = False
@@ -39,16 +43,17 @@ class SneakyDispatcher:
             self._task.cancel()
 
     def queue_comic(self, comic_dict: Dict[str, Any]):
-        """Place a newly generated comic into the stealth queue."""
+        """Place a newly generated comic into THIS device's stealth queue."""
         self.pending_comic = comic_dict
+        self.start()  # the monitor only runs while something waits to release
         logger.info(
-            f"Comic #{comic_dict['issue_number']} placed in STEALTH HOLD. "
+            f"Comic #{comic_dict['issue_number']} placed in STEALTH HOLD for device '{self.device_id}'. "
             f"Waiting for {settings.SNEAKY_SILENCE_SECONDS:.0f}s of continuous silence."
         )
 
     def force_dispatch(self) -> Optional[Dict[str, Any]]:
         """Bypass the silence requirement and release immediately (for testing)."""
-        comic = self.pending_comic or db.get_stealth_hold_comic()
+        comic = self.pending_comic or db.get_stealth_hold_comic(self.device_id)
         if comic:
             self._execute_dispatch(comic, forced=True)
             return comic
@@ -61,6 +66,7 @@ class SneakyDispatcher:
         pct = min(100.0, (silence_sec / required_sec) * 100.0) if required_sec > 0 else 100.0
         
         return {
+            "device_id": self.device_id,
             "has_stealth_comic": self.pending_comic is not None,
             "pending_issue_number": self.pending_comic["issue_number"] if self.pending_comic else None,
             "pending_series_issue": self.pending_comic.get("series_issue") if self.pending_comic else None,
@@ -78,8 +84,8 @@ class SneakyDispatcher:
                 await asyncio.sleep(1.0)
                 
                 if not self.pending_comic:
-                    # Check if DB has one
-                    held = db.get_stealth_hold_comic()
+                    # Safety net (device-scoped): a held row this slot has not seen yet.
+                    held = db.get_stealth_hold_comic(self.device_id)
                     if held:
                         self.pending_comic = held
                     else:
@@ -95,11 +101,13 @@ class SneakyDispatcher:
                 # Check if strict silence threshold is satisfied
                 if silence_duration >= settings.SNEAKY_SILENCE_SECONDS:
                     logger.info(
-                        f"STRICT SILENCE DETECTED ({silence_duration:.1f}s >= {settings.SNEAKY_SILENCE_SECONDS:.0f}s). "
+                        f"STRICT SILENCE DETECTED for device '{self.device_id}' "
+                        f"({silence_duration:.1f}s >= {settings.SNEAKY_SILENCE_SECONDS:.0f}s). "
                         f"Executing sneaky release of Comic #{self.pending_comic['issue_number']}!"
                     )
                     comic = self.pending_comic
                     self._execute_dispatch(comic, forced=False)
+                    self.stop()  # nothing pending: the next queued comic re-arms the loop
                     
             except asyncio.CancelledError:
                 break
@@ -114,6 +122,7 @@ class SneakyDispatcher:
         
         payload = {
             "event": "SNEAKY_COMIC_REFRESH",
+            "device_id": self.device_id,
             "issue_number": comic["issue_number"],
             "series_issue": comic.get("series_issue"),
             "panel_count": comic.get("panel_count"),

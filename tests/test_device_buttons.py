@@ -49,7 +49,14 @@ class TestDeviceButtonsRoute(unittest.TestCase):
             def get_status(self):
                 return {"is_speaking": False}
 
-        with patch.object(main_module, "sneaky_dispatcher", FakeDispatcher()):
+        class FakePipeline:
+            dispatcher = FakeDispatcher()
+
+        class FakePipelines:
+            def for_device(self, device_id):
+                return FakePipeline()
+
+        with patch.object(main_module, "pipelines", FakePipelines()):
             with self.client.websocket_connect("/ws/events") as ws:
                 self.assertEqual(ws.receive_json()["event"], "INIT_SNAPSHOT")
                 resp = self.client.post("/api/device/buttons", json={"button": "forward"})

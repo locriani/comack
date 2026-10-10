@@ -129,6 +129,13 @@ pub fn build_config(submission: &Submission<'_>) -> Result<DeviceConfig, Provisi
         server_host,
         server_port,
         device_name: bounded(device_name),
+        // The portal cannot issue identity — the server's settings page
+        // does that (spec D1). A provisioned device therefore presents no
+        // identity until its pair is entered (secrets.rs or
+        // provision-device.sh), and the server keeps it on the `default`
+        // device, exactly like pre-identity firmware.
+        device_id: heapless::String::new(),
+        device_token: heapless::String::new(),
         tailscale_auth_key: bounded(submission.tailscale_auth_key),
     })
 }

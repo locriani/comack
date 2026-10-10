@@ -14,7 +14,7 @@ class TestSneakyDispatcher(unittest.TestCase):
         def on_disp(payload):
             dispatched.append(payload)
             
-        dispatcher = SneakyDispatcher(vad=vad, on_dispatch=on_disp)
+        dispatcher = SneakyDispatcher(vad=vad, device_id="living-room", on_dispatch=on_disp)
         
         mock_comic = {
             "id": 1,
@@ -39,7 +39,7 @@ class TestSneakyDispatcher(unittest.TestCase):
     def test_mid_speech_release_only_when_the_silence_gate_is_off(self):
         for gate, expected in ((0, 1), (50, 0)):
             dispatched = []
-            dispatcher = SneakyDispatcher(vad=AudioVAD(), on_dispatch=dispatched.append)
+            dispatcher = SneakyDispatcher(vad=AudioVAD(), device_id="living-room", on_dispatch=dispatched.append)
             dispatcher.vad.is_speaking = True
 
             async def run():

@@ -12,8 +12,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use comack_core::adapters::{
-    ComicApiError, HostResolver, HttpClient, HttpComicService, HttpConfig, HttpError,
-    ServerLocator, WebSocketUplink, WsConfig,
+    ComicApiError, DeviceIdentity, HostResolver, HttpClient, HttpComicService, HttpConfig,
+    HttpError, ServerLocator, WebSocketUplink, WsConfig,
 };
 use comack_core::application::ports::{
     AudioSource, Clock, ComicSource, ComicTrigger, FrameDisplay,
@@ -33,6 +33,7 @@ fn service(server: &FakeServer) -> HttpComicService<'static, StdConnector> {
     HttpComicService::new(
         HttpClient::new(StdConnector, "localhost", server.port, config),
         server.ip(),
+        DeviceIdentity::NONE,
     )
 }
 
@@ -127,6 +128,7 @@ fn comic_service_handles_an_empty_server_and_a_dead_one() {
     let mut dead = HttpComicService::new(
         HttpClient::new(StdConnector, "x", support::closed_port(), config),
         Ipv4Addr::LOCALHOST,
+        DeviceIdentity::NONE,
     );
     assert!(matches!(
         dead.latest_issue(),
@@ -223,6 +225,7 @@ fn uplink(port: u16) -> WebSocketUplink<'static, StdConnector, Localhost> {
         ServerLocator::new(Localhost, "localhost"),
         port,
         "/ws/audio",
+        DeviceIdentity::NONE,
         WsConfig::default(),
     )
 }

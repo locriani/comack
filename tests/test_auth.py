@@ -119,8 +119,11 @@ class TestHttpMiddleware:
 
     def test_device_comic_reads_stay_tokenless(self, client):
         settings.WEB_TOKEN = TOKEN
-        # Nothing displayed in the dev database: 404 (route ran) instead of 401 (blocked)
-        assert client.get("/api/comics/current").status_code == 404
+        # The route must RUN, not be blocked: /api/comics/current answers from
+        # whatever the dev database holds (404 when empty, 200 on a self-hosted
+        # box with displayed comics on disk) — never 401. A nonexistent issue
+        # is deterministic regardless of database state: 404, never 401.
+        assert client.get("/api/comics/current").status_code in (200, 404)
         assert client.get("/api/comics/9999/png").status_code == 404
         assert client.get("/api/comics/9999/bin").status_code == 404
 
@@ -149,7 +152,14 @@ class TestEventFeedWebsocket:
             def get_status(self):
                 return {"is_speaking": False}
 
-        monkeypatch.setattr(main_module, "sneaky_dispatcher", Fake())
+        class FakePipeline:
+            dispatcher = Fake()
+
+        class FakePipelines:
+            def for_device(self, device_id):
+                return FakePipeline()
+
+        monkeypatch.setattr(main_module, "pipelines", FakePipelines())
 
     def test_rejects_without_token(self, fake_dispatcher):
         settings.WEB_TOKEN = TOKEN

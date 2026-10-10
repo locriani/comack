@@ -75,8 +75,11 @@ impl Default for HttpConfig {
     }
 }
 
-/// Size of the buffer requests are formatted into.
-pub const MAX_REQUEST_LEN: usize = 192;
+/// Size of the buffer requests are formatted into: the longest path the
+/// comic service builds (`/api/comics/current` plus the identity query,
+/// bounded by the `DeviceConfig` identity caps), room for a 128-byte server
+/// host in the `Host` line, and a full `Content-Length` line.
+pub const MAX_REQUEST_LEN: usize = 384;
 
 /// Format a request with `Connection: close` and `payload` as its body into
 /// `out`.

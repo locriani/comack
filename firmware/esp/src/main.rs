@@ -34,8 +34,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use comack_core::adapters::epd::CHUNK_BYTES;
 use comack_core::adapters::{
-    Epd7in5, HostResolver, HttpClient, HttpComicService, HttpConfig, PressLatch, ServerLocator,
-    TcpConnector, WebSocketUplink, WsConfig,
+    DeviceIdentity, Epd7in5, HostResolver, HttpClient, HttpComicService, HttpConfig, PressLatch,
+    ServerLocator, TcpConnector, WebSocketUplink, WsConfig,
 };
 use comack_core::application::ports::{ButtonInput, FrameDisplay};
 use comack_core::application::{
@@ -189,6 +189,12 @@ fn main() -> Result<()> {
     let host: &'static str = Box::leak(String::from(config.server_host.as_str()).into_boxed_str());
     let auth_key: &'static CStr =
         Box::leak(CString::new(config.tailscale_auth_key.as_str())?.into_boxed_c_str());
+    // The audio thread borrows the identity for 'static, so it is leaked
+    // like the host above: the configured pair lives for the power cycle.
+    let identity = DeviceIdentity {
+        device_id: Box::leak(String::from(config.device_id.as_str()).into_boxed_str()),
+        device_token: Box::leak(String::from(config.device_token.as_str()).into_boxed_str()),
+    };
 
     if config.tailscale_auth_key.is_empty() {
         // No tailnet: an entirely legitimate setup. The server must be on
@@ -204,6 +210,7 @@ fn main() -> Result<()> {
             &mut frame,
             host,
             config.server_port,
+            identity,
             &setup_hold,
         )?;
     } else {
@@ -234,6 +241,7 @@ fn main() -> Result<()> {
             &mut frame,
             host,
             config.server_port,
+            identity,
             &setup_hold,
         )?;
     }
@@ -253,6 +261,8 @@ fn effective_config(store: Option<&NvsDeviceConfigStore>) -> Result<(DeviceConfi
         &secrets::wifi_networks(),
         config::SERVER,
         config::DEVICE_NAME,
+        secrets::DEVICE_ID,
+        secrets::DEVICE_TOKEN,
         secrets::TAILSCALE_AUTH_KEY
             .to_str()
             .context("Tailscale auth key must be UTF-8")?,
@@ -367,6 +377,7 @@ fn run_viewer<C, R>(
     frame: &mut Frame,
     host: &'static str,
     port: u16,
+    identity: DeviceIdentity<'static>,
     setup_hold: &SetupHold,
 ) -> Result<()>
 where
@@ -386,10 +397,17 @@ where
     )?;
     info!("Server '{host}' reachable at {server}");
 
-    spawn_audio_streamer(connector, resolver, microphone, host, port)?;
+    spawn_audio_streamer(connector, resolver, microphone, host, port, identity)?;
 
     let client = HttpClient::new(connector, host, port, HttpConfig::default());
-    let comics = HttpComicService::new(client, server);
+    let comics = HttpComicService::new(
+        client,
+        server,
+        // The configured identity (stored config, else compile-time) rides
+        // on the comic poll, the trigger, and the audio WebSocket handshake;
+        // empty keeps the device on the server's `default` device as before.
+        identity,
+    );
     let mut viewer = ComicViewer::new(
         comics,
         display,
@@ -422,6 +440,7 @@ fn spawn_audio_streamer<C, R>(
     microphone: PdmMicrophone,
     host: &'static str,
     port: u16,
+    identity: DeviceIdentity<'static>,
 ) -> Result<()>
 where
     C: TcpConnector + Send + Copy + 'static,
@@ -438,8 +457,14 @@ where
     .set()?;
     let spawned = thread::Builder::new().stack_size(STACK).spawn(move || {
         let locator = ServerLocator::new(resolver, host);
-        let uplink =
-            WebSocketUplink::new(connector, locator, port, AUDIO_WS_PATH, WsConfig::default());
+        let uplink = WebSocketUplink::new(
+            connector,
+            locator,
+            port,
+            AUDIO_WS_PATH,
+            identity,
+            WsConfig::default(),
+        );
         let mut buffer = vec![0i16; AUDIO_CHUNK_SAMPLES];
         let mut streamer =
             AudioStreamer::new(microphone, uplink, &mut buffer, StreamerConfig::default());

@@ -19,6 +19,14 @@ pub const DEVICE_NAME_MAX_LEN: usize = 32;
 /// Tailscale auth-key capacity; `tskey-auth-…` keys are around 65.
 pub const AUTH_KEY_MAX_LEN: usize = 80;
 
+/// Device-identity capacity. Server-issued ids are name-derived slugs of
+/// about 48 characters plus a dedup suffix (server/devices.py), so 64 is
+/// comfortable headroom.
+pub const DEVICE_ID_MAX_LEN: usize = 64;
+
+/// Per-device token capacity: 256-bit URL-safe tokens are 43 characters.
+pub const DEVICE_TOKEN_MAX_LEN: usize = 64;
+
 /// Why a configuration could not be built from its parts or decoded from
 /// its stored bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +39,10 @@ pub enum ConfigError {
     ServerHostTooLong,
     /// The device name is longer than [`DEVICE_NAME_MAX_LEN`].
     DeviceNameTooLong,
+    /// The device id is longer than [`DEVICE_ID_MAX_LEN`].
+    DeviceIdTooLong,
+    /// The device token is longer than [`DEVICE_TOKEN_MAX_LEN`].
+    DeviceTokenTooLong,
     /// The Tailscale auth key is longer than [`AUTH_KEY_MAX_LEN`].
     AuthKeyTooLong,
     /// The stored bytes do not decode into a configuration.
@@ -44,6 +56,8 @@ impl fmt::Display for ConfigError {
             Self::PasswordTooLong => "password too long",
             Self::ServerHostTooLong => "server host too long",
             Self::DeviceNameTooLong => "device name too long",
+            Self::DeviceIdTooLong => "device id too long",
+            Self::DeviceTokenTooLong => "device token too long",
             Self::AuthKeyTooLong => "Tailscale auth key too long",
             Self::Corrupted => "stored configuration is corrupt",
         };
@@ -66,6 +80,13 @@ pub struct DeviceConfig {
     pub server_port: u16,
     /// Hostname this device registers under.
     pub device_name: heapless::String<DEVICE_NAME_MAX_LEN>,
+    /// Registry id this device presents on identity-aware requests. Empty
+    /// presents no identity, which the server binds to its auto `default`
+    /// device — exactly the tokenless behavior of pre-identity firmware.
+    pub device_id: heapless::String<DEVICE_ID_MAX_LEN>,
+    /// Per-device token paired with `device_id`; together they travel as
+    /// the `?device_id=&device_token=` query parameters (server/devices.py).
+    pub device_token: heapless::String<DEVICE_TOKEN_MAX_LEN>,
     /// Tailscale auth key; empty runs without a tailnet.
     pub tailscale_auth_key: heapless::String<AUTH_KEY_MAX_LEN>,
 }
@@ -83,6 +104,11 @@ impl Default for DeviceConfig {
             server_host: heapless::String::new(),
             server_port: config::SERVER.port,
             device_name,
+            // Identity stays empty: the compile-time `secrets.rs` example
+            // ships empty too, so an unprovisioned device presents no
+            // identity and the server keeps it on the `default` device.
+            device_id: heapless::String::new(),
+            device_token: heapless::String::new(),
             tailscale_auth_key: heapless::String::new(),
         }
     }
@@ -90,9 +116,9 @@ impl Default for DeviceConfig {
 
 impl DeviceConfig {
     /// Builds the compile-time fallback: this build's `secrets.rs` values
-    /// (networks, Tailscale key) and `config.rs` constants (server,
-    /// device name). The config store falls back to it when nothing is
-    /// stored, so already-flashed devices keep booting unchanged.
+    /// (networks, device identity, Tailscale key) and `config.rs` constants
+    /// (server, device name). The config store falls back to it when nothing
+    /// is stored, so already-flashed devices keep booting unchanged.
     ///
     /// # Panics
     ///
@@ -102,6 +128,8 @@ impl DeviceConfig {
         networks: &heapless::Vec<WifiCredentials, MAX_NETWORKS>,
         server: ServerEndpoint<'_>,
         device_name: &str,
+        device_id: &str,
+        device_token: &str,
         tailscale_auth_key: &str,
     ) -> Result<Self, ConfigError> {
         let mut server_host = heapless::String::new();
@@ -112,6 +140,14 @@ impl DeviceConfig {
         device_name_buffer
             .push_str(device_name)
             .map_err(|_| ConfigError::DeviceNameTooLong)?;
+        let mut device_id_buffer = heapless::String::new();
+        device_id_buffer
+            .push_str(device_id)
+            .map_err(|_| ConfigError::DeviceIdTooLong)?;
+        let mut device_token_buffer = heapless::String::new();
+        device_token_buffer
+            .push_str(device_token)
+            .map_err(|_| ConfigError::DeviceTokenTooLong)?;
         let mut auth_key = heapless::String::new();
         auth_key
             .push_str(tailscale_auth_key)
@@ -122,6 +158,8 @@ impl DeviceConfig {
             server_host,
             server_port: server.port,
             device_name: device_name_buffer,
+            device_id: device_id_buffer,
+            device_token: device_token_buffer,
             tailscale_auth_key: auth_key,
         })
     }
@@ -152,6 +190,8 @@ impl DeviceConfig {
         push_byte(&mut out, port_bytes[0]);
         push_byte(&mut out, port_bytes[1]);
         push_str(&mut out, self.device_name.as_str());
+        push_str(&mut out, self.device_id.as_str());
+        push_str(&mut out, self.device_token.as_str());
         push_str(&mut out, self.tailscale_auth_key.as_str());
         out
     }
@@ -181,6 +221,8 @@ impl DeviceConfig {
             server_host: reader.string()?,
             server_port: u16::from_le_bytes([reader.u8()?, reader.u8()?]),
             device_name: reader.string()?,
+            device_id: reader.string()?,
+            device_token: reader.string()?,
             tailscale_auth_key: reader.string()?,
         };
         if !reader.is_empty() {
@@ -190,12 +232,15 @@ impl DeviceConfig {
     }
 }
 
-/// Codec version; decode rejects any other value rather than guess.
-const CODEC_VERSION: u8 = 1;
+/// Codec version; decode rejects any other value rather than guess. v2 adds
+/// the device identity (id + token) after the device name; a v1 blob from a
+/// pre-identity firmware decode-fails, and the boot falls back to the
+/// compile-time secrets as with any other unreadable store.
+const CODEC_VERSION: u8 = 2;
 
 /// Worst-case encoded size: version and network-count bytes, five fully
 /// sized networks, then the length-prefixed host, the port, and the
-/// length-prefixed name and key.
+/// length-prefixed name, id, token, and key.
 pub const ENCODED_MAX: usize = 2
     + MAX_NETWORKS * (1 + SSID_MAX_LEN + 1 + PASSWORD_MAX_LEN)
     + 1
@@ -203,6 +248,10 @@ pub const ENCODED_MAX: usize = 2
     + 2
     + 1
     + DEVICE_NAME_MAX_LEN
+    + 1
+    + DEVICE_ID_MAX_LEN
+    + 1
+    + DEVICE_TOKEN_MAX_LEN
     + 1
     + AUTH_KEY_MAX_LEN;
 
@@ -280,6 +329,8 @@ mod tests {
                 port: 8000,
             },
             "comack-display",
+            "living-room",
+            "device-token",
             "tskey-auth-sample",
         )
         .unwrap()
@@ -299,6 +350,10 @@ mod tests {
         assert!(config.networks.is_empty());
         assert!(config.server_host.is_empty());
         assert!(config.tailscale_auth_key.is_empty());
+        // No identity until one is configured: the server keeps an
+        // identity-less device on its `default` device.
+        assert!(config.device_id.is_empty());
+        assert!(config.device_token.is_empty());
     }
 
     #[test]
@@ -307,6 +362,8 @@ mod tests {
         let long_password = "x".repeat(PASSWORD_MAX_LEN + 1);
         let long_host = "x".repeat(SERVER_HOST_MAX_LEN + 1);
         let long_name = "x".repeat(DEVICE_NAME_MAX_LEN + 1);
+        let long_id = "x".repeat(DEVICE_ID_MAX_LEN + 1);
+        let long_token = "x".repeat(DEVICE_TOKEN_MAX_LEN + 1);
         let long_key = "x".repeat(AUTH_KEY_MAX_LEN + 1);
         let server = ServerEndpoint {
             host: "localhost",
@@ -329,12 +386,14 @@ mod tests {
                     port: 8000
                 },
                 "comack-display",
+                "",
+                "",
                 ""
             ),
             Err(ConfigError::ServerHostTooLong)
         );
         assert_eq!(
-            DeviceConfig::from_compile_time(&heapless::Vec::new(), server, &long_name, ""),
+            DeviceConfig::from_compile_time(&heapless::Vec::new(), server, &long_name, "", "", ""),
             Err(ConfigError::DeviceNameTooLong)
         );
         assert_eq!(
@@ -342,6 +401,30 @@ mod tests {
                 &heapless::Vec::new(),
                 server,
                 "comack-display",
+                &long_id,
+                "",
+                ""
+            ),
+            Err(ConfigError::DeviceIdTooLong)
+        );
+        assert_eq!(
+            DeviceConfig::from_compile_time(
+                &heapless::Vec::new(),
+                server,
+                "comack-display",
+                "living-room",
+                &long_token,
+                ""
+            ),
+            Err(ConfigError::DeviceTokenTooLong)
+        );
+        assert_eq!(
+            DeviceConfig::from_compile_time(
+                &heapless::Vec::new(),
+                server,
+                "comack-display",
+                "",
+                "",
                 &long_key
             ),
             Err(ConfigError::AuthKeyTooLong)
@@ -362,6 +445,8 @@ mod tests {
         }
         config.server_host = bounded(&"h".repeat(SERVER_HOST_MAX_LEN));
         config.device_name = bounded(&"n".repeat(DEVICE_NAME_MAX_LEN));
+        config.device_id = bounded(&"i".repeat(DEVICE_ID_MAX_LEN));
+        config.device_token = bounded(&"t".repeat(DEVICE_TOKEN_MAX_LEN));
         config.tailscale_auth_key = bounded(&"k".repeat(AUTH_KEY_MAX_LEN));
 
         let encoded = config.encode();
@@ -393,6 +478,16 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_the_pre_identity_v1_layout() {
+        // A blob written by codec v1 (before the identity fields) is
+        // corrupted to v2 eyes, and the boot falls back to compile-time
+        // secrets — never a half-decoded config.
+        let mut encoded = sample_config().encode();
+        encoded[0] = 1;
+        assert_eq!(DeviceConfig::decode(&encoded), Err(ConfigError::Corrupted));
+    }
+
+    #[test]
     fn decode_rejects_an_impossible_network_count() {
         let mut encoded = sample_config().encode();
         encoded[1] = (MAX_NETWORKS + 1) as u8;
@@ -413,6 +508,8 @@ mod tests {
             server_host in "[ -~]{0,128}",
             server_port in any::<u16>(),
             device_name in "[ -~]{0,32}",
+            device_id in "[ -~]{0,64}",
+            device_token in "[ -~]{0,64}",
             auth_key in "[ -~]{0,80}",
         ) {
             let mut config = DeviceConfig::default();
@@ -425,6 +522,8 @@ mod tests {
             config.server_host = bounded(&server_host);
             config.server_port = server_port;
             config.device_name = bounded(&device_name);
+            config.device_id = bounded(&device_id);
+            config.device_token = bounded(&device_token);
             config.tailscale_auth_key = bounded(&auth_key);
             assert_eq!(DeviceConfig::decode(&config.encode()).unwrap(), config);
         }

@@ -8,6 +8,7 @@ import { connect, onConnectionStatus } from './ws.js';
 import { initDashboard, setConnectionBadge } from './views/dashboard.js';
 import { initArchive } from './views/archive.js';
 import { initSettings } from './views/settings.js';
+import { initDevicesCard } from './views/devices.js';
 import { initOnboarding } from './views/onboarding.js';
 
 wireTokenChallenge();
@@ -62,6 +63,7 @@ async function boot() {
     initDashboard();
     archiveRef = initArchive($('view-archive'));
     initSettings($('view-settings'), config);
+    initDevicesCard($('view-settings'));
     onConnectionStatus(setConnectionBadge);
     connect();
     renderIdentity();

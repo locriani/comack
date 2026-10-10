@@ -64,12 +64,16 @@ def story_so_far(comics: List[Dict[str, Any]]) -> str:
 
 
 class NarrativeEngine:
-    def __init__(self):
-        pass
+    """One engine per device: it fetches-or-seeds that device's active arc, and each
+    issue continues that device's own story (story_so_far reads the arc's comics, so
+    continuity never crosses into another device's series)."""
+
+    def __init__(self, device_id: str):
+        self.device_id = device_id
 
     async def get_or_create_active_arc(self) -> Dict[str, Any]:
-        """Fetch the current active story arc or seed a new one if expired/absent."""
-        arc = db.get_active_arc()
+        """Fetch the device's current active story arc or seed a new one if expired/absent."""
+        arc = db.get_active_arc(self.device_id)
         if arc:
             if arc["panels_used"] < arc["target_panels"]:
                 return arc
@@ -89,10 +93,12 @@ class NarrativeEngine:
             genre=bible["genre"],
             premise=bible["premise"],
             target_panels=target_panels,
+            device_id=self.device_id,
             metadata={k: bible[k] for k in ("tone", "art_style", "cast")}
         )
-        logger.info(f"New story arc #{arc_id}: '{bible['title']}' ({bible['genre']}), target {target_panels} panels")
-        return db.get_active_arc()
+        logger.info(f"New story arc #{arc_id} for device '{self.device_id}': "
+                    f"'{bible['title']}' ({bible['genre']}), target {target_panels} panels")
+        return db.get_active_arc(self.device_id)
 
     async def generate_comic_script(self, transcript_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -230,4 +236,16 @@ TASK:
         }
 
 
-narrative_engine = NarrativeEngine()
+# One engine per device (spec D3): story arcs and story-so-far continuity are
+# device-scoped. An engine holds nothing but its binding, so instances are
+# cached per device instead of rebuilt on every cycle.
+_engines: Dict[str, NarrativeEngine] = {}
+
+
+def engine_for(device_id: str) -> NarrativeEngine:
+    """The narrative engine for one device — the replacement for the old
+    module-level singleton, which could only ever tell one story."""
+    engine = _engines.get(device_id)
+    if engine is None:
+        engine = _engines[device_id] = NarrativeEngine(device_id)
+    return engine

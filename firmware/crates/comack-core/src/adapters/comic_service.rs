@@ -7,6 +7,7 @@ use log::warn;
 
 use super::buf::SliceWriter;
 use super::http::{HttpClient, HttpError, Method};
+use super::identity::{DeviceIdentity, IdentityPath};
 use super::json::parse_issue_number;
 use super::net::TcpConnector;
 use crate::application::ports::{ComicSource, ComicTrigger, PressReporter};
@@ -43,12 +44,42 @@ impl From<HttpError> for ComicApiError {
 pub struct HttpComicService<'a, C> {
     http: HttpClient<'a, C>,
     server: Ipv4Addr,
+    identity: DeviceIdentity<'a>,
 }
 
 impl<'a, C: TcpConnector> HttpComicService<'a, C> {
-    /// Talk to the server at `server` through `http`.
-    pub const fn new(http: HttpClient<'a, C>, server: Ipv4Addr) -> Self {
-        Self { http, server }
+    /// Talk to the server at `server` through `http`. The `identity` rides
+    /// on the identity-aware requests — the comic poll and the trigger — as
+    /// `?device_id=&device_token=`; [`DeviceIdentity::NONE`] keeps the
+    /// tokenless wire behavior, which the server binds to its `default`
+    /// device.
+    pub const fn new(
+        http: HttpClient<'a, C>,
+        server: Ipv4Addr,
+        identity: DeviceIdentity<'a>,
+    ) -> Self {
+        Self {
+            http,
+            server,
+            identity,
+        }
+    }
+
+    /// The comic poll, carrying this device's identity.
+    fn current_path(&self) -> IdentityPath<'_> {
+        IdentityPath {
+            base: "/api/comics/current",
+            identity: &self.identity,
+        }
+    }
+
+    /// The trigger, carrying this device's identity so the refresh is
+    /// attributed to this device's pipeline.
+    fn trigger_path(&self) -> IdentityPath<'_> {
+        IdentityPath {
+            base: "/api/trigger",
+            identity: &self.identity,
+        }
     }
 }
 
@@ -59,7 +90,7 @@ impl<C: TcpConnector> ComicSource for HttpComicService<'_, C> {
         let mut body = [0u8; 256];
         let resp = self
             .http
-            .request(self.server, Method::Get, "/api/comics/current", &mut body)?;
+            .request(self.server, Method::Get, self.current_path(), &mut body)?;
         match resp.status {
             // Nothing has been revealed yet.
             404 => Ok(None),
@@ -72,6 +103,8 @@ impl<C: TcpConnector> ComicSource for HttpComicService<'_, C> {
     }
 
     fn fetch(&mut self, issue: Issue, frame: &mut Frame) -> Result<(), ComicApiError> {
+        // Deliberately identity-free (spec D2): issue numbers are a global
+        // namespace and the tailnet is the trust boundary.
         let path = format_args!("/api/comics/{}/bin", issue.get());
         let resp = self.http.request(self.server, Method::Get, path, frame)?;
         if resp.status != 200 {
@@ -91,9 +124,9 @@ impl<C: TcpConnector> ComicTrigger for HttpComicService<'_, C> {
 
     fn trigger(&mut self) -> Result<(), ComicApiError> {
         let mut ignored = [0u8; 64];
-        let resp = self
-            .http
-            .request(self.server, Method::Post, "/api/trigger", &mut ignored)?;
+        let resp =
+            self.http
+                .request(self.server, Method::Post, self.trigger_path(), &mut ignored)?;
         if resp.is_success() {
             Ok(())
         } else {
@@ -138,9 +171,21 @@ mod tests {
     const SERVER: Ipv4Addr = Ipv4Addr::new(100, 64, 0, 9);
 
     fn service(connector: ScriptedConnector) -> HttpComicService<'static, ScriptedConnector> {
+        service_with(connector, "", "")
+    }
+
+    fn service_with(
+        connector: ScriptedConnector,
+        device_id: &'static str,
+        device_token: &'static str,
+    ) -> HttpComicService<'static, ScriptedConnector> {
         HttpComicService::new(
             HttpClient::new(connector, "localhost", 8000, HttpConfig::default()),
             SERVER,
+            DeviceIdentity {
+                device_id,
+                device_token,
+            },
         )
     }
 
@@ -211,6 +256,71 @@ mod tests {
         assert_eq!(
             service(reply("404 Not Found", br#"{"detail":"x"}"#)).fetch(issue, &mut frame),
             Err(ComicApiError::Status(404))
+        );
+    }
+
+    #[test]
+    fn latest_issue_presents_the_device_identity() {
+        let c = reply("200 OK", br#"{"issue_number":12,"title":"t"}"#);
+        assert_eq!(
+            service_with(c.clone(), "living-room", "t0ken").latest_issue(),
+            Ok(Issue::new(12))
+        );
+        assert_eq!(
+            request_line(&c),
+            b"GET /api/comics/current?device_id=living-room&device_token=t0ken HTTP/1.1".as_slice()
+        );
+    }
+
+    #[test]
+    fn trigger_presents_the_device_identity() {
+        let c = reply("200 OK", br#"{"status":"ok"}"#);
+        service_with(c.clone(), "living-room", "t0ken")
+            .trigger()
+            .unwrap();
+        assert_eq!(
+            request_line(&c),
+            b"POST /api/trigger?device_id=living-room&device_token=t0ken HTTP/1.1".as_slice()
+        );
+    }
+
+    #[test]
+    fn fetch_stays_identity_free() {
+        // Even for a device that has identity: the bin fetch is the global
+        // namespace (spec D2), so the request line carries no pair.
+        let pixels = [0u8; FRAME_BYTES];
+        let c = reply("200 OK", &pixels);
+        let mut frame = [0u8; FRAME_BYTES];
+        service_with(c.clone(), "living-room", "t0ken")
+            .fetch(Issue::new(7).unwrap(), &mut frame)
+            .unwrap();
+        assert_eq!(request_line(&c), b"GET /api/comics/7/bin HTTP/1.1");
+    }
+
+    #[test]
+    fn a_tokenless_service_keeps_the_bare_paths() {
+        // DeviceIdentity::NONE is today's wire behavior: no query at all, so
+        // the server binds these calls to its `default` device.
+        let c = reply("200 OK", br#"{"issue_number":12,"title":"t"}"#);
+        assert_eq!(service(c.clone()).latest_issue(), Ok(Issue::new(12)));
+        assert_eq!(request_line(&c), b"GET /api/comics/current HTTP/1.1");
+        let c = reply("200 OK", br#"{"status":"ok"}"#);
+        service(c.clone()).trigger().unwrap();
+        assert_eq!(request_line(&c), b"POST /api/trigger HTTP/1.1");
+    }
+
+    #[test]
+    fn a_partial_identity_is_sent_as_presented() {
+        // An id without its token goes out as-is and the server rejects it;
+        // the firmware never silently strips a broken identity down to
+        // tokenless.
+        let c = reply("200 OK", b"");
+        service_with(c.clone(), "living-room", "")
+            .trigger()
+            .unwrap();
+        assert_eq!(
+            request_line(&c),
+            b"POST /api/trigger?device_id=living-room&device_token= HTTP/1.1".as_slice()
         );
     }
 

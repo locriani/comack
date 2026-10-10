@@ -1,8 +1,7 @@
 /**
- * Dashboard view: live e-paper preview, story-arc status, sneaky-mode radar,
- * mined story elements, prompt debug log, and the speech simulator.
- * A port of the original single-file dashboard script onto the shared
- * api/ws/dom modules; the DOM lives in index.html (#view-dashboard).
+ * Dashboard view: live e-paper preview, per-device story-arc cards and comic
+ * previews, sneaky-mode radar, mined story elements, prompt debug log, and
+ * the speech simulator. The DOM lives in index.html (#view-dashboard).
  */
 import { apiJson } from '../api.js';
 import { el, fmtTime } from '../dom.js';
@@ -78,20 +77,71 @@ function updateSneakyStatus(status) {
   }
 }
 
-function updateArc(arc) {
-  if (!arc) {  // the last arc concluded; the next comic seeds a new one
-    $('arcTitle').innerText = 'Generating next arc';
-    $('arcGenre').innerText = '--';
-    $('arcPremise').innerText = 'A new story starts with the next comic.';
-    $('arcDurationText').innerText = '--';
-    $('arcProgressBar').style.width = '0%';
-    return;
+// ── Per-device cards (spec V8): one arc card and one preview card per device ──
+// The registry (GET /api/devices) is the single source: each device's own
+// active arc and the issue its display is showing. Previews use the tokenless
+// per-issue png endpoint; the epoch in the query busts the cache only when a
+// refresh event actually fired, so polling never flickers the images.
+let previewEpoch = 0;
+
+const deviceChip = (device) => el('span', {
+  class: 'flex items-center space-x-1.5 text-xs mono px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700',
+  title: `device: ${device.id}`,
+}, el('span', { class: 'w-1.5 h-1.5 rounded-full bg-indigo-400' }), el('span', {}, device.name));
+
+function arcCard(device) {
+  const arc = device.active_arc;
+  const progress = arc ? Math.min(100, 100 * arc.panels_used / arc.target_panels) : 0;
+  return el('div', { class: 'bg-[#161922] border border-gray-800 rounded-xl p-4 flex flex-col space-y-2', 'data-device-arc': device.id },
+    el('div', { class: 'flex items-center justify-between gap-2' },
+      deviceChip(device),
+      el('span', { class: 'text-xs mono px-2 py-0.5 rounded bg-gray-800 text-gray-300 truncate' }, arc ? arc.genre : '--')),
+    el('h2', { class: 'text-lg font-bold text-white truncate' }, arc ? arc.title : 'Generating next arc'),
+    el('p', { class: 'text-sm text-gray-400 italic line-clamp-2' },
+      arc ? `"${arc.premise}"` : 'A new story starts with the next comic.'),
+    el('div', { class: 'pt-2' },
+      el('div', { class: 'flex justify-between text-xs text-gray-400 mono mb-1' },
+        el('span', {}, 'Arc Lifespan Progress'),
+        el('span', {}, arc ? `${arc.panels_used} / ${arc.target_panels} panels` : '--')),
+      el('div', { class: 'w-full bg-gray-800 rounded-full h-1.5 overflow-hidden' },
+        el('div', { class: 'bg-indigo-500 h-1.5 rounded-full transition-all duration-500', style: `width: ${progress}%` }))));
+}
+
+function deviceCard(device) {
+  const comic = device.current_comic;
+  const live = device.connections.length > 0;
+  const preview = comic
+    ? el('img', {
+        src: `/api/comics/${comic.issue_number}/png?e=${previewEpoch}`,
+        alt: `Latest issue on ${device.name}`,
+        class: 'w-full h-auto aspect-[800/480] object-cover bg-white rounded-sm',
+      })
+    : el('div', { class: 'w-full aspect-[800/480] bg-[#e2e4e9] rounded-sm flex items-center justify-center' },
+        el('span', { class: 'text-xs mono text-gray-500' }, 'No comic displayed yet'));
+  return el('div', { class: 'bg-[#161922] border border-gray-800 rounded-xl p-4 flex flex-col space-y-2', 'data-device-card': device.id },
+    el('div', { class: 'flex items-center justify-between gap-2' },
+      el('span', { class: 'text-sm font-bold text-white truncate' }, device.name),
+      el('span', {
+        class: `text-[10px] mono px-2 py-0.5 rounded ${live
+          ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+          : 'bg-gray-800 text-gray-400'}`,
+      }, live ? 'LIVE' : 'IDLE')),
+    el('div', { class: 'bg-[#e2e4e9] p-1 rounded' }, preview),
+    el('div', { class: 'flex items-center justify-between gap-2 text-[10px] mono text-gray-500' },
+      el('span', {}, comic ? `#${comic.series_issue ?? comic.issue_number} \u00b7 ${comic.title}` : 'waiting for its first comic'),
+      el('a', { href: comic ? `/reader#${comic.issue_number}` : '/reader', class: 'text-indigo-400 hover:text-indigo-300' }, 'reader \u2192')));
+}
+
+async function loadDevices() {
+  try {
+    const body = await apiJson('/api/devices');
+    const devices = body.devices ?? [];
+    $('deviceCount').textContent = `${devices.length} registered`;
+    $('arcCards').replaceChildren(...devices.map(arcCard));
+    $('deviceCards').replaceChildren(...devices.map(deviceCard));
+  } catch (e) {
+    console.error('Error loading devices:', e);
   }
-  $('arcTitle').innerText = arc.title;
-  $('arcGenre').innerText = arc.genre;
-  $('arcPremise').innerText = `"${arc.premise}"`;
-  $('arcDurationText').innerText = `${arc.panels_used} / ${arc.target_panels} panels`;
-  $('arcProgressBar').style.width = `${Math.min(100, 100 * arc.panels_used / arc.target_panels)}%`;
 }
 
 function showOriginals(issue, panelCount) {
@@ -189,22 +239,32 @@ async function simulateSpeech() {
 export function initDashboard() {
   onEvent('INIT_SNAPSHOT', (data) => {
     updateSneakyStatus(data.sneaky_status);
-    updateArc(data.active_arc);
     if (data.current_comic) updateComic(data.current_comic);
+    loadDevices();
   });
-  onEvent('SNEAKY_COMIC_REFRESH', refreshComicImage);
+  onEvent('SNEAKY_COMIC_REFRESH', (data) => {
+    previewEpoch += 1;
+    // The house viewer mirrors the default device's display; another room's
+    // reveal must not relabel it (its own card updates via loadDevices).
+    if (!data.device_id || data.device_id === 'default') refreshComicImage(data);
+    loadDevices();
+  });
   onEvent('NEW_COMIC_QUEUED', (data) => updateSneakyStatus(data.status));
   onEvent('NEW_TRANSCRIPT', (data) => addTranscriptItem(data.transcript));
   onEvent('BUTTON_PRESSED', (data) => showButtonPress(data.button));
 
-  // Polling heartbeat for the silence timer and arc progress (covers ws gaps)
+  // Polling heartbeat for the silence timer (covers ws gaps)
   setInterval(async () => {
     try {
       const data = await apiJson('/api/status');
       updateSneakyStatus(data.sneaky);
-      updateArc(data.active_arc);
     } catch { /* transient; the badge already shows connection state */ }
   }, 1000);
+
+  // The registry's story state moves slower than the silence timer: arcs and
+  // displayed issues refresh on their own cadence.
+  setInterval(loadDevices, 5000);
+  loadDevices();
 
   setInterval(loadPrompts, 5000);
   loadPrompts();

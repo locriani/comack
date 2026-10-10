@@ -12,7 +12,8 @@ use std::thread;
 use std::time::Duration;
 
 use comack_core::adapters::{
-    HttpClient, HttpComicService, HttpConfig, ServerLocator, WebSocketUplink, WsConfig,
+    DeviceIdentity, HttpClient, HttpComicService, HttpConfig, ServerLocator, WebSocketUplink,
+    WsConfig,
 };
 use comack_core::application::{AudioStreamer, ComicViewer, StreamerConfig, ViewerConfig};
 use comack_core::config::{self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE_HZ, AUDIO_WS_PATH};
@@ -104,6 +105,7 @@ fn main() -> ExitCode {
                 locator,
                 port,
                 AUDIO_WS_PATH,
+                DeviceIdentity::NONE,
                 WsConfig::default(),
             );
             let mut buffer = vec![0i16; AUDIO_CHUNK_SAMPLES];
@@ -129,6 +131,9 @@ fn main() -> ExitCode {
     let comics = HttpComicService::new(
         HttpClient::new(StdConnector, host, port, HttpConfig::default()),
         server,
+        // No identity flags on the desktop sim: it presents none and the
+        // server keeps it on the `default` device.
+        DeviceIdentity::NONE,
     );
     let mut frame: Box<[u8; FRAME_BYTES]> = vec![0xFF; FRAME_BYTES]
         .into_boxed_slice()
