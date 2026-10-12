@@ -32,7 +32,7 @@ def clean_env(monkeypatch):
 class TestValidation:
     def test_defaults_load(self):
         s = make()
-        assert (s.PORT, s.COMIC_MIN_MINUTES, s.COMIC_MAX_MINUTES) == (8000, 5.0, 1440.0)
+        assert (s.PORT, s.COMIC_MIN_MINUTES, s.COMIC_MAX_MINUTES) == (8000, 60.0, 720.0)
         assert s.SECRET_PHRASES == ["alpha protocol"]
         assert (s.DISPLAY_WIDTH, s.DISPLAY_HEIGHT) == (800, 480)  # fixed hardware
 
@@ -128,6 +128,9 @@ class TestUnknownEnvVars:
     def test_suggest_alternative(self):
         assert suggest_alternative("COMIC_CYCLE_MINUTES") in ("COMIC_MIN_MINUTES", "COMIC_MAX_MINUTES")
         assert suggest_alternative("TOTALLY_UNRELATED_VAR_XYZ") is None
+        # Edit-distance alone maps FLUX_TOKEN → HF_TOKEN; the alias table wins.
+        assert suggest_alternative("FLUX_TOKEN") == "FLUX_API_KEY"
+        assert suggest_alternative("OPENROUTER_API_KEY") == "LLM_API_KEY"
 
     def test_default_scan_reads_process_env_and_repo_env_file(self, monkeypatch, caplog):
         """The no-argument call (the lifespan path) merges os.environ with the

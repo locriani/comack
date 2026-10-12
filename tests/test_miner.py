@@ -5,7 +5,7 @@ from server.privacy import thematic_miner
 from server import llm as llm_client
 
 
-def echo(system, prompt, url=""):
+def echo(system, prompt, url="", model=""):
     """A model that answers one entry per numbered input line."""
     n = sum(1 for line in prompt.splitlines() if line.split(". ", 1)[0].isdigit())
     return {"sentences": [{"vibe": "x", "energy": "low", "content": "y"}] * n}
@@ -60,7 +60,7 @@ class TestMiner(unittest.TestCase):
             for bad, left in ((None, 0), (botched, 1)):
                 calls = []
 
-                async def llm(system, prompt, url=""):
+                async def llm(system, prompt, url="", model=""):
                     calls.append(prompt)
                     return bad if len(calls) - 1 == failing else echo(system, prompt)
 

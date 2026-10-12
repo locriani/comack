@@ -10,6 +10,7 @@ license.workspace = true
 embedded-hal.workspace = true
 heapless = "0.9"
 log.workspace = true
+qrcodegen-no-heap = "1.8.1"
 
 [dev-dependencies]
 proptest.workspace = true

@@ -12,6 +12,7 @@ from PIL import Image
 
 from server import llm
 from server.config import settings
+from server.render.panel_prompt import normalize_text_anchor, panel_art_prompt
 
 logger = logging.getLogger("comack.flux")
 
@@ -19,6 +20,35 @@ _pipeline = None
 
 # Seconds to wait between attempts at a panel; after the last one the comic is abandoned.
 RETRY_DELAYS_S = (15, 30, 60, 120, 240)
+
+# OpenRouter FLUX.3 (and kin) reject WxH pixels; they want a tier + aspect_ratio.
+_ASPECT_RATIOS = (
+    (21, 9), (2, 1), (16, 9), (3, 2), (7, 5), (4, 3), (5, 4), (1, 1),
+    (4, 5), (3, 4), (5, 7), (2, 3), (9, 16), (1, 2), (9, 21),
+)
+
+
+def nearest_aspect_ratio(width: int, height: int) -> str:
+    """Closest supported aspect ratio for `width`×`height` panel boxes."""
+    target = width / max(height, 1)
+    best = min(_ASPECT_RATIOS, key=lambda wh: abs(wh[0] / wh[1] - target))
+    return f"{best[0]}:{best[1]}"
+
+
+def remote_image_size_fields(model: str, target_size: Tuple[int, int]) -> dict:
+    """Provider-shaped size fields for `/v1/images/generations`.
+
+    Classic OpenAI-compatible hosts take `size: WIDTHxHEIGHT`. FLUX.3 on
+    OpenRouter takes `resolution` (tier) + `aspect_ratio` instead — a pixel
+    `size` is a hard 400.
+    """
+    model_l = (model or "").lower()
+    if "flux-3" in model_l or "flux.3" in model_l:
+        return {
+            "resolution": "768",
+            "aspect_ratio": nearest_aspect_ratio(target_size[0], target_size[1]),
+        }
+    return {"size": f"{target_size[0]}x{target_size[1]}"}
 
 
 class FluxUnavailable(Exception):
@@ -122,22 +152,26 @@ class FluxGenerator:
         pass
 
     def generate_panel_art(self, scene_description: str, target_size: Tuple[int, int],
+                           art_style: str = "", text_anchor: str = "top",
                            genre: str = "Graphic Novel") -> Optional[Image.Image]:
         """
         Generate comic panel artwork.
         :param scene_description: Visual description from the story engine
         :param target_size: (width, height) of the panel in pixels; the image comes back at the
             model's own resolution with about this aspect ratio (the compositor saves and fits it)
-        :param genre: Comic genre context
+        :param art_style: Arc bible art style — always injected into the image prompt
+        :param text_anchor: Lettering zone — art leaves clear space there
+        :param genre: Unused; kept for older callers
         :return: the model's original RGB image, or None only when no local pipeline exists at all
         :raises PanelArtFailed: every retry failed (remote-only mode: the image API never answered)
         """
+        del genre  # reserved for callers; style comes from art_style
         # 1. Remote-only mode: FLUX_API_URL set means the OpenAI-compatible image API is
         #    the only backend — the local diffusers stack (torch import, GGUF download,
         #    VRAM guard) is never touched, even when every attempt fails: exhaustion
         #    raises PanelArtFailed, which the compositor already handles.
         if settings.FLUX_API_URL:
-            prompt = f"comic panel: {scene_description}"
+            prompt = panel_art_prompt(scene_description, art_style, text_anchor=text_anchor)
             for attempt, delay in enumerate((*RETRY_DELAYS_S, None), 1):
                 try:
                     return self._generate_via_api(prompt, target_size)
@@ -149,14 +183,15 @@ class FluxGenerator:
                     time.sleep(delay)
 
         # 2. Local diffusion pipeline, retried with backoff (OOM, LLM hogging VRAM, load errors)
-        return self._generate_local_loop(scene_description, target_size)
+        return self._generate_local_loop(scene_description, target_size, art_style, text_anchor)
 
-    def _generate_local_loop(self, scene_description: str, target_size: Tuple[int, int]) -> Optional[Image.Image]:
+    def _generate_local_loop(self, scene_description: str, target_size: Tuple[int, int],
+                             art_style: str = "", text_anchor: str = "top") -> Optional[Image.Image]:
         """The local path, unchanged: retried with backoff; None (procedural art) when
         no local pipeline exists at all."""
         for attempt, delay in enumerate((*RETRY_DELAYS_S, None), 1):
             try:
-                return self._generate_local(scene_description, target_size)
+                return self._generate_local(scene_description, target_size, art_style, text_anchor)
             except FluxUnavailable as e:
                 logger.warning(f"No local image pipeline ({e}); using procedural art.")
                 return None
@@ -168,7 +203,8 @@ class FluxGenerator:
                 logger.warning(f"Panel attempt {attempt} failed ({e}); retrying in {delay}s.")
                 time.sleep(delay)
 
-    def _generate_local(self, scene_description: str, target_size: Tuple[int, int]) -> Image.Image:
+    def _generate_local(self, scene_description: str, target_size: Tuple[int, int],
+                        art_style: str = "", text_anchor: str = "top") -> Image.Image:
         width, height = target_size
         model_id = settings.FLUX_MODEL_ID.lower()
         is_flux = "flux" in model_id
@@ -201,9 +237,9 @@ class FluxGenerator:
             steps = settings.FLUX_INFERENCE_STEPS
             guidance = settings.FLUX_GUIDANCE_SCALE
         
-        # The art style comes from the arc, via the scene description; halftoning happens after.
-        prompt = f"comic panel: {scene_description}"
-        
+        # Arc bible art_style + lettering clear-space for text_anchor.
+        prompt = panel_art_prompt(scene_description, art_style, text_anchor=text_anchor)
+
         logger.info(f"Generating panel with {settings.FLUX_MODEL_ID} ({gen_w}x{gen_h}, {steps} steps)...")
         kwargs = {
             "prompt": prompt,
@@ -233,22 +269,30 @@ class FluxGenerator:
         headers = {}
         if settings.FLUX_API_KEY:
             headers["Authorization"] = f"Bearer {settings.FLUX_API_KEY}"
+        model = settings.FLUX_API_MODEL
         payload: dict = {
             "prompt": prompt,
             "n": 1,
-            "size": f"{target_size[0]}x{target_size[1]}",
             "response_format": "b64_json",
+            **remote_image_size_fields(model, target_size),
         }
-        if settings.FLUX_API_MODEL:
-            payload["model"] = settings.FLUX_API_MODEL
+        if model:
+            payload["model"] = model
 
         # Remote calls show up in /api/prompts like local renders do.
-        entry = llm.log_call(settings.FLUX_API_MODEL or settings.FLUX_MODEL_ID, "", prompt)
+        entry = llm.log_call(model or settings.FLUX_MODEL_ID, "", prompt)
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=120.0) as client:
                 resp = client.post(llm.api_url(settings.FLUX_API_URL, "images/generations"),
                                    json=payload, headers=headers)
-                resp.raise_for_status()
+                if resp.is_error:
+                    # Surface the provider's reason (e.g. wrong size shape) in logs.
+                    detail = (resp.text or "")[:500]
+                    logger.warning(
+                        "Remote image API error (%s): HTTP %s %s",
+                        settings.FLUX_API_URL, resp.status_code, detail,
+                    )
+                    resp.raise_for_status()
                 data = resp.json()["data"][0]
                 if data.get("b64_json"):
                     img = Image.open(io.BytesIO(base64.b64decode(data["b64_json"])))
@@ -261,7 +305,8 @@ class FluxGenerator:
             entry["output"] = f"[remote image {img.width}x{img.height}]"
             return img.convert("RGB")
         except Exception as e:
-            logger.warning(f"Remote image API error ({settings.FLUX_API_URL}): {e}")
+            if "HTTP " not in str(e):  # already logged with body above
+                logger.warning(f"Remote image API error ({settings.FLUX_API_URL}): {e}")
             raise
 
 

@@ -50,13 +50,17 @@ Usage: scripts/provision-device.sh [options]
                         against the compile-time default localhost:8000)
   --name NAME           device name (recorded and checked against the
                         compile-time default comack-display)
-  --tskey KEY           Tailscale auth key (optional; the placeholder from
-                        secrets.rs.example is kept if omitted)
+  --tskey KEY           Tailscale auth key (optional; empty = LAN-only.
+                        secrets.rs is scrubbed empty after a successful flash)
   --serial-port DEV     serial device for espflash (default: auto-detect)
   --monitor             open the serial monitor after flashing (or instead of
                         flashing when there is nothing to do)
+  --e1001               force the monochrome E1001 build (skip auto-detect)
+  --e1002               force the colour E1002 build (skip auto-detect)
+                        When neither is passed, scripts/detect-reterminal-board.sh
+                        picks the board from cache / boot log / flash marker.
   --no-secrets          leave secrets.rs untouched (it must already exist)
-  --force-secrets       overwrite an existing, differing secrets.rs
+  --force-secrets      overwrite an existing, differing secrets.rs
   --no-flash            render + build only; nothing is flashed and no
                         provisioning state is recorded
   --force               build and flash even when nothing changed
@@ -84,6 +88,8 @@ NAME=""
 TSKEY=""
 SERIAL_PORT=""
 MONITOR=0
+# -1 = auto-detect; 0 = E1001; 1 = E1002
+E1002=-1
 NO_SECRETS=0
 FORCE_SECRETS=0
 NO_FLASH=0
@@ -99,7 +105,9 @@ while [ "$#" -gt 0 ]; do
     --tskey)         [ "$#" -ge 2 ] || die "--tskey needs a value"; TSKEY=$2; shift 2 ;;
     --serial-port)   [ "$#" -ge 2 ] || die "--serial-port needs a value"; SERIAL_PORT=$2; shift 2 ;;
     --monitor)       MONITOR=1; shift ;;
-    --no-secrets)    NO_SECRETS=1; shift ;;
+    --e1001)         E1002=0; shift ;;
+    --e1002)         E1002=1; shift ;;
+    --no-secrets)   NO_SECRETS=1; shift ;;
     --force-secrets) FORCE_SECRETS=1; shift ;;
     --no-flash)      NO_FLASH=1; shift ;;
     --force)         FORCE=1; shift ;;
@@ -108,6 +116,42 @@ while [ "$#" -gt 0 ]; do
     *)               die "unknown argument: $1 (see --help)" ;;
   esac
 done
+
+DETECT_SCRIPT="$REPO_ROOT/scripts/detect-reterminal-board.sh"
+
+resolve_board() {
+  # Sets E1002 to 0 or 1. Auto-detect when neither --e1001 nor --e1002 was passed.
+  if [ "$E1002" -ne -1 ]; then
+    return 0
+  fi
+  local detect_args=() board
+  if [ -n "$SERIAL_PORT" ]; then
+    detect_args+=(--serial-port "$SERIAL_PORT")
+  fi
+  if [ ! -x "$DETECT_SCRIPT" ]; then
+    die "board auto-detect script missing or not executable: $DETECT_SCRIPT"
+  fi
+  echo "Auto-detecting reTerminal board (E1001 vs E1002)…"
+  if ! board="$("$DETECT_SCRIPT" "${detect_args[@]}")"; then
+    if [ "$INTERACTIVE" -eq 1 ]; then
+      local reply
+      reply="$(prompt_visible "Board model (e1001 or e1002)" "")"
+      case "$reply" in
+        e1001|E1001) board=e1001 ;;
+        e1002|E1002) board=e1002 ;;
+        *) die "board must be e1001 or e1002 (got: $reply)" ;;
+      esac
+    else
+      die "board auto-detect failed — pass --e1001 or --e1002 (see scripts/detect-reterminal-board.sh)"
+    fi
+  fi
+  case "$board" in
+    e1001) E1002=0 ;;
+    e1002) E1002=1 ;;
+    *) die "detect-reterminal-board.sh returned an unexpected value: $board" ;;
+  esac
+  echo "Using board: $board"
+}
 
 # Prompted answers only when stdin is a terminal; --yes turns prompts off.
 INTERACTIVE=0
@@ -242,15 +286,62 @@ rust_escape() {
   printf '%s' "$s"
 }
 
-render_secrets() { # prints the new secrets.rs, rendered from the example
-  local tpl
-  tpl="$(cat "$SECRETS_EXAMPLE")"
-  tpl="$(replace_all "$tpl" 'YOUR_SSID' "$(rust_escape "$SSID")")"
-  tpl="$(replace_all "$tpl" 'YOUR_PASSWORD' "$(rust_escape "$PASSWORD")")"
-  if [ -n "$TSKEY" ]; then
-    tpl="$(replace_all "$tpl" 'tskey-auth-XXXX' "$(rust_escape "$TSKEY")")"
+# Scrub the working-tree secrets file back to the empty checked-in example
+# so real Wi-Fi / Tailscale material never sits in this open-source checkout.
+scrub_secrets() {
+  if [ -f "$SECRETS_EXAMPLE" ]; then
+    cp "$SECRETS_EXAMPLE" "$SECRETS"
+    chmod 600 "$SECRETS" 2>/dev/null || true
+    echo "Scrubbed secrets.rs back to the empty example (credentials live on the device only)."
   fi
-  printf '%s\n' "$tpl"
+}
+
+render_secrets() { # prints a one-shot secrets.rs for this flash only
+  local ssid_e password_e tskey_e networks server_host_e server_port
+  ssid_e="$(rust_escape "$SSID")"
+  password_e="$(rust_escape "$PASSWORD")"
+  if [ -n "$SSID" ]; then
+    networks="heapless::Vec::from([WifiCredentials::new(\"${ssid_e}\", \"${password_e}\")
+        .expect(\"SSID or password exceeds the bounded buffers\")])"
+  else
+    networks="heapless::Vec::<WifiCredentials, MAX_NETWORKS>::new()"
+  fi
+  if [ -n "$TSKEY" ]; then
+    tskey_e="$(rust_escape "$TSKEY")"
+  else
+    tskey_e=""
+  fi
+  # Split host:port from --server (defaults stay empty → config.rs localhost).
+  server_host_e=""
+  server_port=8000
+  if [ -n "$SERVER" ] && [ "$SERVER" != "$DEFAULT_SERVER" ]; then
+    if [[ "$SERVER" == *:* ]]; then
+      server_host_e="$(rust_escape "${SERVER%:*}")"
+      server_port="${SERVER##*:}"
+    else
+      server_host_e="$(rust_escape "$SERVER")"
+    fi
+  fi
+  cat <<EOF
+//! Generated by scripts/provision-device.sh for a single USB flash.
+//! Scrubbed back to secrets.rs.example after a successful flash — do not commit.
+
+use core::ffi::CStr;
+
+use comack_core::domain::{WifiCredentials, MAX_NETWORKS};
+
+pub fn wifi_networks() -> heapless::Vec<WifiCredentials, MAX_NETWORKS> {
+    ${networks}
+}
+
+pub const TAILSCALE_AUTH_KEY: &CStr = c"${tskey_e}";
+
+pub const SERVER_HOST: &str = "${server_host_e}";
+pub const SERVER_PORT: u16 = ${server_port};
+
+pub const DEVICE_ID: &str = "";
+pub const DEVICE_TOKEN: &str = "";
+EOF
 }
 
 hash_line() { # portable sha256 of a file, or of stdin when no file is given
@@ -264,8 +355,8 @@ hash_line() { # portable sha256 of a file, or of stdin when no file is given
 # Hash of the collected values (everything that decides what gets baked in).
 # Fields are separated by \037, which validation keeps out of every value.
 values_hash() {
-  printf '%s\037%s\037%s\037%s\037%s\037%s' \
-    "$SSID" "$PASSWORD" "$SERVER" "$NAME" "$TSKEY" "$NO_SECRETS" | hash_line
+  printf '%s\037%s\037%s\037%s\037%s\037%s\037%s' \
+    "$SSID" "$PASSWORD" "$SERVER" "$NAME" "$TSKEY" "$NO_SECRETS" "$E1002" | hash_line
 }
 
 current_secrets_hash() {
@@ -277,24 +368,34 @@ current_secrets_hash() {
 }
 
 TMP_FILE=""
+WROTE_SECRETS=0
 cleanup() {
   if [ -n "$TMP_FILE" ]; then
     rm -f "$TMP_FILE"
   fi
+  # Never leave a populated secrets.rs behind if this run wrote one
+  # (Ctrl-C mid-build, failed flash, --no-flash, …).
+  if [ "${WROTE_SECRETS:-0}" -eq 1 ] && [ "${NO_SECRETS:-0}" -eq 0 ]; then
+    scrub_secrets
+  fi
 }
 trap cleanup EXIT
 
-write_secrets() { # write_secrets <content>: atomic replace
+write_secrets() { # write_secrets <content>: atomic replace (gitignored; scrubbed after flash)
   local content=$1 tmp
   tmp="$(mktemp "$ESP_DIR/src/.secrets.rs.XXXXXX")"
   TMP_FILE=$tmp
   printf '%s\n' "$content" > "$tmp"
-  chmod 644 "$tmp"
+  chmod 600 "$tmp"
   mv -f "$tmp" "$SECRETS"
   TMP_FILE=""
+  WROTE_SECRETS=1
 }
 
 echo "=== Comack device provisioning ==="
+
+# Resolve E1001/E1002 before hashing values or building — detection may prompt.
+resolve_board
 
 # Fill anything missing: prompts interactively, hard requirement otherwise.
 if [ "$NO_SECRETS" -eq 0 ]; then
@@ -386,14 +487,15 @@ Install the ESP build tools once (see firmware/README.md):
   . ~/export-esp.sh        # activate it, then re-run this script"
 fi
 
-if [ "$SERVER" != "$DEFAULT_SERVER" ] || [ "$NAME" != "$DEFAULT_NAME" ]; then
-  echo "note: the compile-time fallback stores Wi-Fi + Tailscale key only."
-  echo "      Server address and device name are constants in"
-  echo "      firmware/crates/comack-core/src/config.rs (SERVER, DEVICE_NAME;"
-  echo "      defaults $DEFAULT_SERVER / $DEFAULT_NAME)."
-  echo "      Yours: server=$SERVER name=$NAME — if they differ from the"
-  echo "      defaults, edit that file before flashing, or use the on-device"
-  echo "      portal once the device is provisioned."
+if [ "$NAME" != "$DEFAULT_NAME" ]; then
+  echo "note: device name is still the config.rs constant DEVICE_NAME"
+  echo "      (default $DEFAULT_NAME). Yours: $NAME — edit"
+  echo "      firmware/crates/comack-core/src/config.rs or set it in the"
+  echo "      on-device portal after first boot."
+fi
+if [ -n "$SERVER" ] && [ "$SERVER" != "$DEFAULT_SERVER" ]; then
+  echo "note: server $SERVER will be baked into this flash via secrets.rs"
+  echo "      (scrubbed from the tree after flash)."
 fi
 
 if [ "$NO_SECRETS" -eq 0 ]; then
@@ -446,9 +548,15 @@ else
   echo "Leaving secrets.rs untouched (--no-secrets)"
 fi
 
+FEATURES=""
+if [ "$E1002" -eq 1 ]; then
+  FEATURES="--features e1002"
+fi
+
 if [ "$NO_FLASH" -eq 1 ]; then
   echo "Building firmware (--no-flash: nothing will be flashed)…"
-  (cd "$ESP_DIR" && cargo build --release)
+  # shellcheck disable=SC2086 # FEATURES is two words on purpose
+  (cd "$ESP_DIR" && cargo build --release $FEATURES)
   if [ ! -f "$ELF" ]; then
     die "build finished but the image is missing: $ELF"
   fi
@@ -458,7 +566,8 @@ if [ "$NO_FLASH" -eq 1 ]; then
 fi
 
 echo "Building firmware (first build downloads and compiles ESP-IDF v5.5.5)…"
-(cd "$ESP_DIR" && cargo build --release)
+# shellcheck disable=SC2086 # FEATURES is two words on purpose
+(cd "$ESP_DIR" && cargo build --release $FEATURES)
 if [ ! -f "$ELF" ]; then
   die "build finished but the image is missing: $ELF"
 fi
@@ -471,14 +580,29 @@ if [ "$MONITOR" -eq 1 ]; then
   flash_args+=(--monitor)
 fi
 echo "Flashing over USB${SERIAL_PORT:+ on $SERIAL_PORT}…"
-if ! espflash "${flash_args[@]}"; then
+  if ! espflash "${flash_args[@]}"; then
   die "espflash failed — check the USB cable and serial permissions (dialout group); see firmware/README.md"
+fi
+
+# Credentials were only needed to bake the image; the flash carries them
+# now. Scrub here (and clear the flag so EXIT does not print twice).
+if [ "$NO_SECRETS" -eq 0 ]; then
+  scrub_secrets
+  WROTE_SECRETS=0
 fi
 
 {
   printf 'PROVISION_VALUES=%s\n' "$values_now"
+  # Hash of the scrubbed (empty) file — next run must re-render to flash again.
   printf 'PROVISION_SECRETS=%s\n' "$(current_secrets_hash)"
 } > "$STATE_FILE"
+
+# Remember MAC→board so the next flash can skip the slow detect path.
+remember_args=(--remember "$( [ "$E1002" -eq 1 ] && echo e1002 || echo e1001 )")
+if [ -n "$SERIAL_PORT" ]; then
+  remember_args+=(--serial-port "$SERIAL_PORT")
+fi
+"$DETECT_SCRIPT" "${remember_args[@]}" >/dev/null || warn "could not cache board identity for next flash"
 
 echo ""
 echo "Provisioned. The device will boot with the compiled-in settings."
@@ -488,5 +612,5 @@ if [ -n "$SERIAL_PORT" ]; then
 else
   echo "  - watch the serial log: espflash monitor"
 fi
-echo "  - later Wi-Fi changes need no USB: hold the setup button to reopen"
+echo "  - later Wi-Fi changes need no USB: hold all 3 buttons 10 s to reopen"
 echo "    the on-device portal (see firmware/README.md)"

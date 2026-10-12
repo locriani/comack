@@ -64,11 +64,18 @@ class Settings(BaseSettings):
 
     # ── OpenAI-compatible LLM ─────────────────────────────────────────────
     LLM_URL: str = Field(
-        "", description="OpenAI-compatible chat endpoint (llama.cpp, vLLM, Ollama...), e.g. http://host:8080/. Empty disables story mining.")
+        "", description="OpenAI-compatible chat endpoint (llama.cpp, vLLM, Ollama, OpenRouter...), e.g. http://host:8080/ or https://openrouter.ai/api/v1. Empty disables story mining.")
     LLM_MODEL: str = Field(
-        "", description="Model name sent with each request (llama.cpp ignores it).")
+        "", description="Model name sent with each request (llama.cpp ignores it; OpenRouter wants e.g. anthropic/claude-3.5-sonnet).")
+    LLM_API_KEY: str = Field(
+        "", description="Bearer token for the story LLM endpoint (OpenRouter, OpenAI, …). "
+        "Sent on every chat call and the connectivity probe when set (masked in GET /api/config). "
+        "Leave empty for local servers that do not authenticate.")
     MINER_LLM_URL: str = Field(
         "", description="Separate small, fast server for the per-sentence miner pass (empty = LLM_URL).")
+    MINER_LLM_MODEL: str = Field(
+        "", description="Model for miner passes (empty = LLM_MODEL). Use a free OpenRouter slug "
+        "e.g. openai/gpt-oss-20b:free to keep story on a paid model.")
 
     # ── Hugging Face ──────────────────────────────────────────────────────
     HF_TOKEN: str = Field(
@@ -93,9 +100,11 @@ class Settings(BaseSettings):
         default_factory=lambda: ["alpha protocol"],
         description="Spoken phrases that force an immediate refresh (comma-separated, case-insensitive).")
     COMIC_MIN_MINUTES: float = Field(
-        5, ge=0, le=10080, description="Never generate a new comic sooner than this many minutes after the last.")
+        60, ge=0, le=10080,
+        description="Never generate a new comic sooner than this many minutes after the last (~1/hour target).")
     COMIC_MAX_MINUTES: float = Field(
-        1440, ge=0, le=10080, description="Never wait longer than this many minutes between comics (1 day default).")
+        720, ge=0, le=10080,
+        description="Force a comic after this many minutes even with few room notes (12h default).")
     DEFAULT_LINES_WANTED: int = Field(
         8, ge=1, le=30, description="How many scrambled lines each comic should collect (feeds the LLM prompt).")
     PROCESS_INTERVAL_MINUTES: float = Field(
@@ -199,8 +208,23 @@ def _known_setting_names() -> set[str]:
     return set(Settings.model_fields) | KNOWN_EXTERNAL_VARS | FIXED_VARS
 
 
+# Common wrong names that edit-distance alone mis-suggests (FLUX_TOKEN → HF_TOKEN).
+COMMON_MISNOMERS = {
+    "FLUX_TOKEN": "FLUX_API_KEY",
+    "FLUX_KEY": "FLUX_API_KEY",
+    "FLUX_API_TOKEN": "FLUX_API_KEY",
+    "LLM_KEY": "LLM_API_KEY",
+    "LLM_TOKEN": "LLM_API_KEY",
+    "LLM_API_TOKEN": "LLM_API_KEY",
+    "OPENROUTER_API_KEY": "LLM_API_KEY",
+    "OPENROUTER_KEY": "LLM_API_KEY",
+}
+
+
 def suggest_alternative(name: str) -> str | None:
-    """Closest known setting name for a typo'd variable, if any."""
+    """Closest known setting name for a typo'd / aliased variable, if any."""
+    if name in COMMON_MISNOMERS:
+        return COMMON_MISNOMERS[name]
     matches = get_close_matches(name, sorted(_known_setting_names()), n=1)
     return matches[0] if matches else None
 

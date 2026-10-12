@@ -28,6 +28,58 @@ def test_no_llm_url_means_no_call():
     assert llm.prompt_log[-1]["output"] == "error: LLM_URL is not set"
 
 
+def test_bearer_header_sent_when_llm_api_key_set():
+    reply = httpx.Response(200, json={"choices": [{"message": {"content": '{"a": 1}'}}]})
+    post = AsyncMock(return_value=reply)
+    with patch.object(llm.settings, "LLM_API_KEY", "sk-or-v1-test"), \
+         patch.object(httpx.AsyncClient, "post", post):
+        assert asyncio.run(llm.complete_json("sys", "hello", "http://x")) == {"a": 1}
+    assert post.await_args.kwargs["headers"]["Authorization"] == "Bearer sk-or-v1-test"
+
+
+def test_no_auth_header_without_llm_api_key():
+    reply = httpx.Response(200, json={"choices": [{"message": {"content": '{"a": 1}'}}]})
+    post = AsyncMock(return_value=reply)
+    with patch.object(llm.settings, "LLM_API_KEY", ""), \
+         patch.object(httpx.AsyncClient, "post", post):
+        assert asyncio.run(llm.complete_json("sys", "hello", "http://x")) == {"a": 1}
+    assert "Authorization" not in post.await_args.kwargs.get("headers", {})
+
+
+def test_miner_complete_json_uses_miner_model_settings():
+    reply = httpx.Response(200, json={"choices": [{"message": {"content": '{"a": 1}'}}]})
+    post = AsyncMock(return_value=reply)
+    with patch.object(llm.settings, "LLM_MODEL", "story-model"), \
+         patch.object(llm.settings, "MINER_LLM_MODEL", "miner-free"), \
+         patch.object(llm.settings, "MINER_LLM_URL", "http://miner"), \
+         patch.object(httpx.AsyncClient, "post", post):
+        assert asyncio.run(llm.miner_complete_json("sys", "hello")) == {"a": 1}
+    assert post.await_args.kwargs["json"]["model"] == "miner-free"
+    assert "miner" in post.await_args.args[0]
+
+
+def test_model_kwarg_overrides_llm_model():
+    reply = httpx.Response(200, json={"choices": [{"message": {"content": '{"a": 1}'}}]})
+    post = AsyncMock(return_value=reply)
+    with patch.object(llm.settings, "LLM_MODEL", "story-model"), \
+         patch.object(httpx.AsyncClient, "post", post):
+        assert asyncio.run(llm.complete_json("sys", "hello", "http://x", model="miner-free")) == {"a": 1}
+    assert post.await_args.kwargs["json"]["model"] == "miner-free"
+
+
+def test_openrouter_gets_attribution_headers():
+    reply = httpx.Response(200, json={"choices": [{"message": {"content": '{"a": 1}'}}]})
+    post = AsyncMock(return_value=reply)
+    with patch.object(llm.settings, "LLM_API_KEY", "sk-or"), \
+         patch.object(llm.settings, "LLM_URL", "https://openrouter.ai/api/v1"), \
+         patch.object(httpx.AsyncClient, "post", post):
+        assert asyncio.run(llm.complete_json("sys", "hello")) == {"a": 1}
+    headers = post.await_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer sk-or"
+    assert headers["HTTP-Referer"]
+    assert headers["X-OpenRouter-Title"] == "Comack"
+
+
 def test_entries_expire_after_15_minutes():
     llm.prompt_log.clear()
     now = time.time()

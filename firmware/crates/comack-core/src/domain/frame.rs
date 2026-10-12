@@ -13,6 +13,15 @@ pub const FRAME_BYTES: usize = FRAME_PIXELS / 8;
 /// where a set bit is a white pixel.
 pub type Frame = [u8; FRAME_BYTES];
 
+/// Bytes per colour image: 4 bits per pixel, exactly 192 000.
+pub const COLOR_FRAME_BYTES: usize = FRAME_PIXELS / 2;
+
+/// A colour image in the Spectra 6 panel's native packing: row-major, two
+/// pixels per byte with the even (left) pixel in the high nibble. Nibbles:
+/// 0 black, 1 white, 2 yellow, 3 red, 5 blue, 6 green. Served by
+/// `/api/comics/{n}/color.bin`.
+pub type ColorFrame = [u8; COLOR_FRAME_BYTES];
+
 /// Number of black (cleared) pixels in a packed frame.
 pub fn black_pixel_count(frame: &[u8]) -> u32 {
     frame.iter().map(|b| (!b).count_ones()).sum()
@@ -26,6 +35,7 @@ mod tests {
     fn frame_geometry() {
         assert_eq!(FRAME_BYTES, 48_000);
         assert_eq!(FRAME_PIXELS, 384_000);
+        assert_eq!(COLOR_FRAME_BYTES, 192_000);
     }
 
     #[test]

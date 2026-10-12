@@ -11,11 +11,9 @@ ExecStart=/home/your-user/comack/.venv/bin/uvicorn server.main:app --host 0.0.0.
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-# LLM_URL: your OpenAI-compatible endpoint (llama.cpp, vLLM, Ollama...), e.g.
-#   http://<your-llm-server>:80/   -- plain IP, LAN hostname, or Tailscale hostname
-Environment=LLM_URL=http://your-llm-server:80/
-Environment=FLUX_MODEL_ID=black-forest-labs/FLUX.1-schnell
-Environment=SNEAKY_SILENCE_SECONDS=0
+# Hot-configurable settings (LLM_*, FLUX_*, SNEAKY_*, …) live in the repo-root
+# .env and the dashboard Settings / onboarding UI. Do not pin them here —
+# real Environment= values outrank .env on every restart and make the UI lie.
 # Models are already cached; skip the per-load huggingface.co revision check.
 # Unset this once when a new model needs downloading.
 Environment=HF_HUB_OFFLINE=1

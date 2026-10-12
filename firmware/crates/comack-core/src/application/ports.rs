@@ -6,7 +6,7 @@
 
 use core::fmt::Debug;
 
-use crate::domain::{Button, ButtonLevels, DeviceConfig, Frame, Instant, Issue};
+use crate::domain::{Button, ButtonLevels, ColorFrame, DeviceConfig, Frame, Instant, Issue};
 
 /// Device configuration storage: load the settings the device runs with,
 /// or `None` when nothing is stored yet (then the compile-time fallback
@@ -42,6 +42,12 @@ pub trait FrameDisplay {
 
     /// Show `frame` (see [`Frame`] for the pixel format).
     fn show(&mut self, frame: &Frame) -> Result<(), Self::Error>;
+}
+
+/// A display that can also show a [`ColorFrame`] (the Spectra 6 panel).
+pub trait ColorFrameDisplay: FrameDisplay {
+    /// Show `image` (see [`ColorFrame`] for the pixel format).
+    fn show_color(&mut self, image: &ColorFrame) -> Result<(), Self::Error>;
 }
 
 /// The front-panel buttons.

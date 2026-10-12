@@ -132,11 +132,11 @@ else
 fi
 
 # ── 5. systemd unit ──────────────────────────────────────────────────────────
-# Renders comack.service with the real user and paths. The LLM_URL pin is
-# replaced with a note rather than a value: real environment variables in the
-# unit outrank .env, so pinning it would silently defeat wizard/dashboard
-# edits. The FLUX_MODEL_ID / SNEAKY_SILENCE_SECONDS / HF_HUB_OFFLINE pins
-# stay — they are the local-GPU profile defaults.
+# Renders comack.service with the real user and paths. Hot-configurable
+# settings (LLM_*, FLUX_MODEL_ID, SNEAKY_*, …) stay in .env / the dashboard —
+# a unit Environment= would outrank both and make Settings / onboarding lie.
+# Leftover pins from older units are commented out. HF_HUB_OFFLINE stays
+# (operational flag, not a Settings field).
 RUN_USER="$(id -un)"
 RENDERED="comack.service.rendered"
 sed -E \
@@ -144,14 +144,18 @@ sed -E \
     -e "s|^User=.*|User=${RUN_USER}|" \
     -e "s|^WorkingDirectory=.*|WorkingDirectory=${ROOT}|" \
     -e "s|^ExecStart=.*|ExecStart=${ROOT}/.venv/bin/uvicorn server.main:app --host 0.0.0.0 --port 8000|" \
-    -e "s|^# LLM_URL:.*|# LLM_URL is read from the repo-root .env (like every other setting), so|" \
-    -e "s|^#   http://<your-llm-server>:80/.*|# edits made in the dashboard's settings page take effect. The pins below|" \
-    -e "s|^Environment=LLM_URL=.*|# are the local-GPU profile defaults; remove them to let .env win.|" \
+    -e "s|^Environment=LLM_URL=.*|# LLM_URL belongs in .env (dashboard Settings), not the unit.|" \
+    -e "s|^Environment=LLM_API_KEY=.*|# LLM_API_KEY belongs in .env (dashboard Settings), not the unit.|" \
+    -e "s|^Environment=LLM_MODEL=.*|# LLM_MODEL belongs in .env (dashboard Settings), not the unit.|" \
+    -e "s|^Environment=FLUX_MODEL_ID=.*|# FLUX_MODEL_ID belongs in .env (dashboard Settings), not the unit.|" \
+    -e "s|^Environment=FLUX_API_KEY=.*|# FLUX_API_KEY belongs in .env (dashboard Settings), not the unit.|" \
+    -e "s|^Environment=FLUX_API_URL=.*|# FLUX_API_URL belongs in .env (dashboard Settings), not the unit.|" \
+    -e "s|^Environment=SNEAKY_SILENCE_SECONDS=.*|# SNEAKY_SILENCE_SECONDS belongs in .env (dashboard Settings), not the unit.|" \
     comack.service > "$RENDERED"
 
-if grep -Eq 'your-user|your-llm-server' "$RENDERED"; then
+if grep -Eq 'your-user' "$RENDERED"; then
     echo "error: rendered unit still contains placeholders — refusing to install:" >&2
-    grep -En 'your-user|your-llm-server' "$RENDERED" >&2
+    grep -En 'your-user' "$RENDERED" >&2
     exit 1
 fi
 echo "== Rendered systemd unit: $ROOT/$RENDERED (user: ${RUN_USER}, workdir: $ROOT)"

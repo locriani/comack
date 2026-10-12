@@ -140,7 +140,7 @@ SCRIPT_JSON = {
 }
 
 
-async def fake_complete_json(system_prompt, user_prompt, base_url=""):
+async def fake_complete_json(system_prompt, user_prompt, base_url="", model=""):
     """One fake for the three callers: arc bibles, comic scripts, miner passes.
     Bibles count themselves, so two devices never share a series."""
     if "Invent a completely new comic series" in user_prompt:

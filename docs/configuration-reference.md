@@ -90,8 +90,9 @@ Clients carry the pair as build-time constants (firmware: `DEVICE_ID` /
 
 | Setting | Type | Default | Bounds | Restart | Meaning |
 |---|---|---|---|---|---|
-| `LLM_URL` | str | `""` | — | hot | OpenAI-compatible chat endpoint (llama.cpp, vLLM, Ollama…), e.g. `http://host:8080/`. **Empty disables story mining** — the pipeline stops before mining and no comic is generated. |
-| `LLM_MODEL` | str | `""` | — | hot | Model name sent with each request (llama.cpp ignores it). |
+| `LLM_URL` | str | `""` | — | hot | OpenAI-compatible chat endpoint (llama.cpp, vLLM, Ollama, OpenRouter…), e.g. `http://host:8080/` or `https://openrouter.ai/api/v1`. **Empty disables story mining** — the pipeline stops before mining and no comic is generated. |
+| `LLM_MODEL` | str | `""` | — | hot | Model name sent with each request (llama.cpp ignores it; OpenRouter wants e.g. `anthropic/claude-3.5-sonnet`). |
+| `LLM_API_KEY` | str | `""` | — | hot* | Bearer token for the story LLM endpoint (OpenRouter, OpenAI, …). Sent on every chat call and the connectivity probe when set (masked in GET `/api/config`). Leave empty for local servers that do not authenticate. |
 | `MINER_LLM_URL` | str | `""` | — | hot | Separate small, fast server for the per-sentence miner pass (empty = `LLM_URL`). |
 
 ## Hugging Face

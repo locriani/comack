@@ -11,8 +11,8 @@ use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal::spi::SpiDevice;
 use log::{info, warn};
 
-use crate::application::ports::FrameDisplay;
-use crate::domain::{Frame, FRAME_HEIGHT, FRAME_WIDTH};
+use crate::application::ports::{ColorFrameDisplay, FrameDisplay};
+use crate::domain::{ColorFrame, Frame, FRAME_HEIGHT, FRAME_WIDTH};
 
 /// Controller commands used by the refresh cycle.
 pub mod cmd {
@@ -58,6 +58,28 @@ const RESOLUTION: [u8; 4] = {
 /// How often BUSY is polled, and how long before giving up on it.
 const BUSY_POLL_MS: u32 = 10;
 const BUSY_TIMEOUT_MS: u32 = 20_000;
+/// A Spectra 6 colour refresh takes 14-19 s, so it needs a longer leash.
+const SPECTRA6_BUSY_TIMEOUT_MS: u32 = 40_000;
+
+/// Spectra 6 (reTerminal E1002) init sequence: command, then its parameters.
+/// Register values from ESPHome's `Seeed-reTerminal-E1002` model.
+const SPECTRA6_INIT: [(u8, &[u8]); 13] = [
+    (0xAA, &[0x49, 0x55, 0x20, 0x08, 0x09, 0x18]),
+    (0x01, &[0x3F]),
+    (0x00, &[0x5F, 0x69]),
+    (0x03, &[0x00, 0x54, 0x00, 0x44]),
+    (0x05, &[0x40, 0x1F, 0x1F, 0x2C]),
+    (0x06, &[0x6F, 0x1F, 0x17, 0x49]),
+    (0x08, &[0x6F, 0x1F, 0x1F, 0x22]),
+    (0x30, &[0x03]),
+    (0x50, &[0x3F]),
+    (0x60, &[0x02, 0x00]),
+    (cmd::RESOLUTION_SETTING, &RESOLUTION),
+    (0x84, &[0x01]),
+    (0xE3, &[0x2F]),
+];
+/// Spectra 6 pixel data: 4 bits per pixel, even pixel in the high nibble.
+const SPECTRA6_DATA: u8 = 0x10;
 
 /// Why a refresh failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +91,8 @@ pub enum EpdError<SpiE, PinE> {
 }
 
 /// The panel. `spi` owns chip-select; `busy` is low while the controller
-/// is working.
+/// is working. Monochrome 7.5" (E1001) by default; [`Self::spectra6`] switches
+/// to the 7.3" colour panel (E1002), which has the same wiring.
 pub struct Epd7in5<SPI, DC, RST, BUSY, D> {
     spi: SPI,
     dc: DC,
@@ -77,6 +100,29 @@ pub struct Epd7in5<SPI, DC, RST, BUSY, D> {
     busy: BUSY,
     delay: D,
     chunk: [u8; CHUNK_BYTES],
+    spectra6: bool,
+}
+
+/// What a Spectra 6 refresh uploads.
+#[derive(Clone, Copy)]
+enum Spectra6Pixels<'a> {
+    /// A 1-bit frame, expanded to black and white on the way.
+    Mono(&'a Frame),
+    /// A colour image already packed for the panel.
+    Colour(&'a ColorFrame),
+}
+
+/// Expands 1-bit pixels (1 = white, MSB leftmost) to Spectra 6 nibbles
+/// (0x1 white, 0x0 black), two pixels per byte, even pixel high. `out` must
+/// hold four bytes per source byte.
+fn expand_to_nibbles(src: &[u8], out: &mut [u8]) {
+    for (quad, byte) in out.chunks_exact_mut(4).zip(src) {
+        for (k, dst) in quad.iter_mut().enumerate() {
+            let even = (byte >> (7 - 2 * k)) & 1;
+            let odd = (byte >> (6 - 2 * k)) & 1;
+            *dst = even << 4 | odd;
+        }
+    }
 }
 
 type Result<T, SPI, PIN> =
@@ -99,7 +145,17 @@ where
             busy,
             delay,
             chunk: [0; CHUNK_BYTES],
+            spectra6: false,
         }
+    }
+
+    /// Drive the 7.3" Spectra 6 colour panel (reTerminal E1002) instead of
+    /// the monochrome one. 1-bit frames still show as black and white;
+    /// colour images go through [`Self::display_color`].
+    #[must_use]
+    pub fn spectra6(mut self) -> Self {
+        self.spectra6 = true;
+        self
     }
 
     /// Full refresh cycle: wake, initialise, upload, refresh, deep sleep.
@@ -110,6 +166,9 @@ where
         info!("Starting e-paper refresh cycle...");
         self.reset()?;
         self.wait_busy()?;
+        if self.spectra6 {
+            return self.display_spectra6(Spectra6Pixels::Mono(frame));
+        }
 
         // VGH/VGL 20 V, VDH/VDL 15 V.
         self.command(cmd::POWER_SETTING, &[0x07, 0x07, 0x3F, 0x3F])?;
@@ -140,9 +199,46 @@ where
     /// # Errors
     /// SPI or pin failures.
     pub fn sleep(&mut self) -> Result<(), SPI, PinE> {
-        self.command(cmd::POWER_OFF, &[])?;
+        let power_off: &[u8] = if self.spectra6 { &[0x00] } else { &[] };
+        self.command(cmd::POWER_OFF, power_off)?;
         self.wait_busy()?;
         self.command(cmd::DEEP_SLEEP, &[cmd::DEEP_SLEEP_CHECK])
+    }
+
+    /// Full refresh with a colour image: 4 bits per pixel in the panel's
+    /// native packing (see [`ColorFrame`]). Spectra 6 panels only; a
+    /// monochrome panel cannot show it, so the call is refused with a warning.
+    ///
+    /// # Errors
+    /// SPI or pin failures; a BUSY timeout is only logged.
+    pub fn display_color(&mut self, image: &ColorFrame) -> Result<(), SPI, PinE> {
+        if !self.spectra6 {
+            warn!("Colour frame ignored: panel is monochrome");
+            return Ok(());
+        }
+        info!("Starting e-paper colour refresh cycle...");
+        self.reset()?;
+        self.wait_busy()?;
+        self.display_spectra6(Spectra6Pixels::Colour(image))
+    }
+
+    /// Spectra 6 cycle, after reset: init, upload, power on, refresh. The
+    /// caller's `sleep` powers off.
+    fn display_spectra6(&mut self, pixels: Spectra6Pixels<'_>) -> Result<(), SPI, PinE> {
+        for (command, data) in SPECTRA6_INIT {
+            self.command(command, data)?;
+        }
+        self.wait_busy()?;
+
+        self.command(SPECTRA6_DATA, &[])?;
+        self.pixels_spectra6(pixels)?;
+
+        self.command(cmd::POWER_ON, &[])?;
+        self.wait_busy()?;
+        self.command(cmd::DISPLAY_REFRESH, &[0x00])?;
+        self.wait_busy()?;
+        info!("Display refreshed successfully.");
+        self.sleep()
     }
 
     /// Release the peripherals.
@@ -154,16 +250,22 @@ where
         self.rst.set_high().map_err(EpdError::Pin)?;
         self.delay.delay_ms(20);
         self.rst.set_low().map_err(EpdError::Pin)?;
-        self.delay.delay_ms(4);
+        // ESPHome holds the Spectra 6 reset low for 200 ms.
+        self.delay.delay_ms(if self.spectra6 { 200 } else { 4 });
         self.rst.set_high().map_err(EpdError::Pin)?;
         self.delay.delay_ms(20);
         Ok(())
     }
 
     fn wait_busy(&mut self) -> Result<(), SPI, PinE> {
+        let timeout = if self.spectra6 {
+            SPECTRA6_BUSY_TIMEOUT_MS
+        } else {
+            BUSY_TIMEOUT_MS
+        };
         let mut waited = 0;
         while self.busy.is_low().map_err(EpdError::Pin)? {
-            if waited >= BUSY_TIMEOUT_MS {
+            if waited >= timeout {
                 warn!("E-paper busy timeout");
                 break;
             }
@@ -202,6 +304,28 @@ where
         }
         Ok(())
     }
+
+    /// Streams the pixels to the panel: a 1-bit frame is expanded to 4-bit
+    /// pixels a quarter chunk of source bytes at a time (no full-colour
+    /// buffer needed); a colour image is already in the panel's packing.
+    fn pixels_spectra6(&mut self, pixels: Spectra6Pixels<'_>) -> Result<(), SPI, PinE> {
+        self.dc.set_high().map_err(EpdError::Pin)?;
+        match pixels {
+            Spectra6Pixels::Mono(frame) => {
+                for block in frame.chunks(CHUNK_BYTES / 4) {
+                    let out = &mut self.chunk[..block.len() * 4];
+                    expand_to_nibbles(block, out);
+                    self.spi.write(out).map_err(EpdError::Spi)?;
+                }
+            }
+            Spectra6Pixels::Colour(image) => {
+                for block in image.chunks(CHUNK_BYTES) {
+                    self.spi.write(block).map_err(EpdError::Spi)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<SPI, DC, RST, BUSY, D, PinE> FrameDisplay for Epd7in5<SPI, DC, RST, BUSY, D>
@@ -220,10 +344,24 @@ where
     }
 }
 
+impl<SPI, DC, RST, BUSY, D, PinE> ColorFrameDisplay for Epd7in5<SPI, DC, RST, BUSY, D>
+where
+    SPI: SpiDevice,
+    DC: OutputPin<Error = PinE>,
+    RST: OutputPin<Error = PinE>,
+    BUSY: InputPin<Error = PinE>,
+    D: DelayNs,
+    PinE: core::fmt::Debug,
+{
+    fn show_color(&mut self, image: &ColorFrame) -> core::result::Result<(), Self::Error> {
+        self.display_color(image)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::FRAME_BYTES;
+    use crate::domain::{COLOR_FRAME_BYTES, FRAME_BYTES};
     use core::convert::Infallible;
     use embedded_hal::digital::ErrorType as PinErrorType;
     use embedded_hal::spi::{ErrorKind, ErrorType as SpiErrorType, Operation};
@@ -448,6 +586,113 @@ mod tests {
         assert!(events[start + 1..refresh]
             .iter()
             .all(|e| matches!(e, Event::Data(_))));
+    }
+
+    #[test]
+    fn expands_one_bit_pixels_to_spectra6_nibbles() {
+        let mut out = [0xEE; 8];
+        // White, black, white, black, then four black: 0x10 0x10 0x00 0x00.
+        expand_to_nibbles(&[0b1010_0000, 0xFF], &mut out);
+        assert_eq!(out, [0x10, 0x10, 0x00, 0x00, 0x11, 0x11, 0x11, 0x11]);
+    }
+
+    #[test]
+    fn spectra6_cycle_sends_init_then_nibbles_then_refresh() {
+        let bus = Shared::default();
+        let frame = checkerboard();
+        let mut epd = Epd7in5::new(
+            Spi(bus.clone()),
+            Dc(bus.clone()),
+            Rst(bus.clone()),
+            Busy(bus.clone()),
+            Delay(bus.clone()),
+        )
+        .spectra6();
+        epd.display_frame(&frame).unwrap();
+        let events = &bus.borrow().events;
+        let log = command_log(events);
+        let commands: Vec<u8> = log.iter().map(|(c, _)| *c).collect();
+        assert_eq!(
+            commands,
+            [
+                0xAA,
+                0x01,
+                0x00,
+                0x03,
+                0x05,
+                0x06,
+                0x08,
+                0x30,
+                0x50,
+                0x60,
+                0x61,
+                0x84,
+                0xE3,
+                SPECTRA6_DATA,
+                cmd::POWER_ON,
+                cmd::DISPLAY_REFRESH,
+                cmd::POWER_OFF,
+                cmd::DEEP_SLEEP,
+            ]
+        );
+        assert_eq!(log[10].1, [0x03, 0x20, 0x01, 0xE0]); // 800x480
+        assert_eq!(log[15].1, [0x00]); // refresh parameter
+        assert_eq!(log[16].1, [0x00]); // power-off parameter
+
+        let sent: Vec<u8> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Data(d) if d.len() > 1 => Some(d.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(sent.len(), FRAME_BYTES * 4);
+        // First source byte 0 -> eight black pixels.
+        assert_eq!(sent[..4], [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn color_image_goes_to_the_panel_verbatim() {
+        let bus = Shared::default();
+        let image: Box<ColorFrame> = (0..COLOR_FRAME_BYTES)
+            .map(|i| [0x02, 0x35, 0x61][i % 3])
+            .collect::<Vec<u8>>()
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        let mut epd = Epd7in5::new(
+            Spi(bus.clone()),
+            Dc(bus.clone()),
+            Rst(bus.clone()),
+            Busy(bus.clone()),
+            Delay(bus.clone()),
+        )
+        .spectra6();
+        epd.display_color(&image).unwrap();
+        let events = &bus.borrow().events;
+        let sent: Vec<u8> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Data(d) if d.len() > 1 => Some(d.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(sent.as_slice(), image.as_slice());
+        let commands: Vec<u8> = command_log(events).iter().map(|(c, _)| *c).collect();
+        assert!(commands.contains(&SPECTRA6_DATA) && commands.contains(&cmd::DISPLAY_REFRESH));
+    }
+
+    #[test]
+    fn color_image_is_refused_on_the_monochrome_panel() {
+        let bus = Shared::default();
+        let image: Box<ColorFrame> = std::vec![0u8; COLOR_FRAME_BYTES]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        panel(&bus).display_color(&image).unwrap();
+        assert_eq!(bus.borrow().events.len(), 0);
     }
 
     #[test]

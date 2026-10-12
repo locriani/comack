@@ -41,6 +41,9 @@ class TestPathClassification:
             "/api/comics/current.bin",
             "/api/comics/12/png",
             "/api/comics/12/bin",
+            "/api/comics/12/color.bin",
+            "/api/comics/12/color.bin/0",
+            "/api/comics/12/color.bin/3",
             "/api/comics/12/color.png",
             "/api/comics/12/panel3.png",
         ):

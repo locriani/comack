@@ -28,7 +28,7 @@ export function wireTokenChallenge() {
       class: 'fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4',
       role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Access token required',
     },
-      el('div', { class: 'bg-[#161922] border border-gray-800 rounded-xl p-6 w-full max-w-md space-y-4 shadow-2xl' },
+      el('div', { class: 'card p-6 w-full max-w-md space-y-4 shadow-2xl' },
         el('h2', { class: 'text-lg font-bold text-white' }, '🔒 Access token required'),
         el('p', { class: 'text-sm text-gray-400' },
           'This Comack server is protected by WEB_TOKEN. Paste the token from the server\u2019s .env to continue.'),

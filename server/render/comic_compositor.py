@@ -4,57 +4,17 @@ Assembles comic pages from common layouts (LAYOUTS), renders speech balloons, na
 and sound effects, then applies Floyd-Steinberg error-diffusion dithering.
 Outputs both PNG preview and 48,000-byte 1-bit packed binary for the reTerminal E1001.
 """
-import math
-import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 from server.config import settings, COMICS_DIR
 from server.layouts import LAYOUTS, resolve_layout
+from server.render.dither_spectra6 import dither_spectra6
+from server.render.lettering import draw_lettering, get_font
+from server.render.panel_prompt import normalize_text_anchor
 
 WIDTH = settings.DISPLAY_WIDTH   # 800
 HEIGHT = settings.DISPLAY_HEIGHT # 480
-
-
-def _get_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
-    """Load default font or system TTF if available."""
-    try:
-        # Try finding standard system fonts on mac or linux
-        font_names = [
-            "/System/Library/Fonts/Supplemental/Comic Sans MS.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        ]
-        for fn in font_names:
-            if Path(fn).exists():
-                return ImageFont.truetype(fn, size)
-    except Exception:
-        pass
-    return ImageFont.load_default()
-
-
-def wrap_text(text: str, font: ImageFont.ImageFont, max_width: int, draw: ImageDraw.ImageDraw) -> List[str]:
-    """Wrap text to fit within max_width pixels."""
-    words = text.split()
-    if not words:
-        return []
-    lines = []
-    current_line = []
-    
-    for word in words:
-        test_line = " ".join(current_line + [word])
-        bbox = draw.textbbox((0, 0), test_line, font=font)
-        w = bbox[2] - bbox[0]
-        if w <= max_width:
-            current_line.append(word)
-        else:
-            if current_line:
-                lines.append(" ".join(current_line))
-            current_line = [word]
-            
-    if current_line:
-        lines.append(" ".join(current_line))
-    return lines
 
 
 def dither_to_1bit_monochrome(image: Image.Image) -> Tuple[Image.Image, bytes]:
@@ -102,8 +62,10 @@ class ComicCompositor:
         # 3. Each panel is a polygon mask: white under it (an inset's gutter), art inside it shrunk
         #    by half a gutter, then a black ring for the frame
         from server.render.flux_generator import release_pipeline
+        art_style = script.get("art_style") or ""
         try:
-            originals = self._draw_panels(canvas, layout_type, panels, left, top, area_w, area_h, h)
+            originals = self._draw_panels(
+                canvas, layout_type, panels, left, top, area_w, area_h, h, art_style=art_style)
         finally:  # also when a panel gives up (PanelArtFailed): the pipeline holds ~17 GB of RAM
             release_pipeline()
 
@@ -126,7 +88,22 @@ class ComicCompositor:
         bin_path = COMICS_DIR / f"issue_{issue_number:04d}.bin"
         dithered_img.save(png_path)
         bin_path.write_bytes(bin_bytes)
+        self.write_color_bin(issue_number)
         return png_path, bin_path
+
+    def write_color_bin(self, issue_number: int) -> Path:
+        """The 192,000-byte Spectra 6 image (4 bits per pixel) for the E1002, dithered from the saved
+        full-color page, else from the 1-bit page for issues that predate it."""
+        stem = COMICS_DIR / f"issue_{issue_number:04d}"
+        source = next((p for p in (Path(f"{stem}_color.png"), Path(f"{stem}.png")) if p.exists()), None)
+        if source is None:
+            raise FileNotFoundError(f"Issue #{issue_number} has no page to dither")
+        with Image.open(source) as page:
+            _, packed = dither_spectra6(page)
+        assert len(packed) == WIDTH * HEIGHT // 2, f"Color bin must be 192000, got {len(packed)}"
+        out = Path(f"{stem}_color.bin")
+        out.write_bytes(packed)
+        return out
 
     def _draw_header(self, img: Image.Image, script: Dict[str, Any]):
         """The black banner: series title, issue number within the series, issue title."""
@@ -138,10 +115,10 @@ class ComicCompositor:
         arc_title = script.get("arc_title") or "COMACK"
         header_text = f"{arc_title.upper()}  •  ISSUE #{series_issue:03d}  •  {title.upper()}"
         size = 14
-        header_font = _get_font(size, bold=True)
+        header_font = get_font(size, bold=True)
         while size > 8 and draw.textlength(header_text, font=header_font) > WIDTH - 2 * self.margin:
             size -= 1  # shrink long titles to fit the banner
-            header_font = _get_font(size, bold=True)
+            header_font = get_font(size, bold=True)
         draw.text((self.margin, 6), header_text, fill="white", font=header_font)
 
     def redraw_header(self, script: Dict[str, Any]):
@@ -156,8 +133,11 @@ class ComicCompositor:
                 page.save(path)
                 if page.mode == "1":
                     Path(f"{stem}.bin").write_bytes(page.tobytes())
+        if Path(f"{stem}_color.png").exists():
+            self.write_color_bin(script["issue_number"])
 
-    def _draw_panels(self, canvas, layout_type, panels, left, top, area_w, area_h, h) -> List[Optional[Image.Image]]:
+    def _draw_panels(self, canvas, layout_type, panels, left, top, area_w, area_h, h,
+                     art_style: str = "") -> List[Optional[Image.Image]]:
         """Draws every panel; returns each panel's original model art (None for procedural art)."""
         originals = []
         for i, quad in enumerate(LAYOUTS[layout_type][1]):
@@ -172,66 +152,44 @@ class ComicCompositor:
             text_box = tuple(round(v) for v in (max(tlx, blx) + h, max(tly, try_) + h,
                                                 min(trx, brx) - h, min(bly, bry) - h))
             layer = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
-            originals.append(self._render_panel(layer, ImageDraw.Draw(layer), inner.getbbox(), text_box, panel_data, i))
+            originals.append(self._render_panel(
+                layer, ImageDraw.Draw(layer), inner.getbbox(), text_box, panel_data, i,
+                art_style=art_style))
             canvas.paste(layer, mask=inner)
             canvas.paste((0, 0, 0), mask=ImageChops.subtract(inner, inner.filter(ImageFilter.MinFilter(7))))
         return originals
 
     def _render_panel(self, canvas: Image.Image, draw: ImageDraw.ImageDraw,
                       box: Tuple[int, int, int, int], text_box: Tuple[int, int, int, int],
-                      panel_data: Dict[str, Any], index: int) -> Optional[Image.Image]:
+                      panel_data: Dict[str, Any], index: int,
+                      art_style: str = "") -> Optional[Image.Image]:
         """Render illustration (filling box), then narrator box, speech balloons, and SFX (inside text_box).
         The caller clips to the panel shape and draws the frame. Returns the model's original art."""
         x0, y0, x1, y1 = box
         p_width = x1 - x0
         p_height = y1 - y0
+        anchor = normalize_text_anchor(panel_data.get("text_anchor"))
 
         # 1. Generate rich panel illustration with FLUX.1 (or procedural fallback)
         from server.render.flux_generator import flux_generator
         scene_desc = panel_data.get("scene_description", "")
-        flux_img = flux_generator.generate_panel_art(scene_desc, (p_width, p_height))
-        
+        flux_img = flux_generator.generate_panel_art(
+            scene_desc, (p_width, p_height), art_style=art_style, text_anchor=anchor)
+
         if flux_img:
             canvas.paste(flux_img.resize((p_width, p_height), Image.Resampling.LANCZOS), (x0, y0))
         else:
             self._render_comic_art(draw, box, panel_data, index)
-        
-        # Text placement uses the upright box that fits inside the panel shape
+
+        # Lettering stays in the upright box that fits inside the panel shape
         x0, y0, x1, y1 = text_box
         p_width = x1 - x0
+        p_height = y1 - y0
 
-        # Panel Number tag in bottom right
-        tag_font = _get_font(10, bold=True)
+        tag_font = get_font(10, bold=True)
         draw.text((x1 - 18, y1 - 16), f"P{index + 1}", fill=(0, 0, 0), font=tag_font)
-        
-        # Render Narration box if present
-        narration = panel_data.get("narration")
-        balloon_top_offset = y0 + 10
-        if narration:
-            balloon_top_offset = self._draw_narration_box(draw, x0 + 8, y0 + 8, p_width - 16, narration)
-            
-        # Render Speech Balloons
-        balloons = panel_data.get("speech_balloons", [])
-        for b_idx, balloon in enumerate(balloons):
-            b_text = balloon.get("text", "")
-            b_char = balloon.get("character", "")
-            if b_text:
-                full_text = f"{b_char.upper()}: {b_text}" if b_char else b_text
-                # Alternate balloon positions if multiple
-                b_x = x0 + 12 if b_idx % 2 == 0 else x0 + (p_width // 4)
-                b_y = balloon_top_offset + (b_idx * 55)
-                max_w = min(p_width - 24, 220)
-                self._draw_speech_balloon(draw, b_x, b_y, max_w, full_text, points_left=(b_idx % 2 == 0))
-                
-        # Render Sound Effect if present
-        sfx = panel_data.get("sound_effect")
-        if sfx:
-            sfx_font = _get_font(20, bold=True)
-            sfx_x = x0 + (p_width // 2) - 30
-            sfx_y = y1 - 45
-            # Draw comic drop shadow
-            draw.text((sfx_x + 2, sfx_y + 2), sfx.upper(), fill=(0, 0, 0), font=sfx_font)
-            draw.text((sfx_x, sfx_y), sfx.upper(), fill=(0, 0, 0), font=sfx_font)
+
+        draw_lettering(draw, text_box, panel_data, anchor)
         return flux_img
 
     def _render_comic_art(self, draw: ImageDraw.ImageDraw, box: Tuple[int, int, int, int],
@@ -279,59 +237,6 @@ class ComicCompositor:
             # Radiating energy lines around object
             draw.line([(cx - 42, cy - 42), (cx - 48, cy - 45)], fill=(0, 0, 0), width=2)
             draw.line([(cx - 30, cy - 62), (cx - 33, cy - 68)], fill=(0, 0, 0), width=2)
-
-    def _draw_narration_box(self, draw: ImageDraw.ImageDraw, x: int, y: int, max_width: int, text: str) -> int:
-        """Draw a rectangular narrator caption box with drop shadow."""
-        font = _get_font(11, bold=True)
-        lines = wrap_text(text, font, max_width - 12, draw)
-        if not lines:
-            return y
-        
-        line_height = 14
-        box_h = (len(lines) * line_height) + 10
-        box_w = max_width
-        
-        # Drop shadow
-        draw.rectangle([x + 3, y + 3, x + box_w + 3, y + box_h + 3], fill=(0, 0, 0))
-        # Main caption box
-        draw.rectangle([x, y, x + box_w, y + box_h], fill=(255, 255, 255), outline=(0, 0, 0), width=2)
-        
-        for i, line in enumerate(lines):
-            draw.text((x + 6, y + 5 + i * line_height), line, fill=(0, 0, 0), font=font)
-            
-        return y + box_h + 10
-
-    def _draw_speech_balloon(self, draw: ImageDraw.ImageDraw, x: int, y: int,
-                             max_width: int, text: str, points_left: bool = True):
-        """Draw a classic rounded comic speech balloon with directional tail."""
-        font = _get_font(11, bold=False)
-        lines = wrap_text(text, font, max_width - 16, draw)
-        if not lines:
-            return
-            
-        line_height = 14
-        box_h = (len(lines) * line_height) + 12
-        # Calculate actual width
-        max_line_w = max(draw.textbbox((0, 0), line, font=font)[2] for line in lines)
-        box_w = min(max_width, max(max_line_w + 16, 70))
-        
-        # Rounded balloon
-        draw.rounded_rectangle([x, y, x + box_w, y + box_h], radius=7, fill=(255, 255, 255), outline=(0, 0, 0), width=2)
-        
-        # Speech tail pointing down
-        if points_left:
-            tail = [(x + 12, y + box_h - 1), (x + 6, y + box_h + 10), (x + 22, y + box_h - 1)]
-        else:
-            tail = [(x + box_w - 22, y + box_h - 1), (x + box_w - 6, y + box_h + 10), (x + box_w - 12, y + box_h - 1)]
-            
-        draw.polygon(tail, fill=(255, 255, 255))
-        draw.line([tail[0], tail[1], tail[2]], fill=(0, 0, 0), width=2)
-        # Erase internal line between balloon and tail
-        draw.line([(tail[0][0] + 1, y + box_h), (tail[2][0] - 1, y + box_h)], fill=(255, 255, 255), width=2)
-        
-        # Render text
-        for i, line in enumerate(lines):
-            draw.text((x + 8, y + 6 + i * line_height), line, fill=(0, 0, 0), font=font)
 
 
 comic_compositor = ComicCompositor()

@@ -5,7 +5,7 @@
 //! panel holds the image until the next refresh.
 
 use comack_core::application::ports::FrameDisplay;
-use comack_core::domain::{draw_text_scaled, Frame, FRAME_BYTES, FRAME_WIDTH};
+use comack_core::domain::{draw_qr, draw_text_scaled, wifi_join_payload, Frame, FRAME_WIDTH};
 
 /// Text scale for body lines: 3× keeps 44 characters per line readable
 /// from across the room. Headings use one step more.
@@ -19,7 +19,7 @@ const PITCH: usize = 9;
 
 /// Formats `lines` centred, top to bottom, first line as the heading.
 fn layout(lines: &[&str], frame: &mut Frame) {
-    *frame = [0xFF; FRAME_BYTES];
+    frame.fill(0xFF); // not `*frame = [..]`: that builds a 48 KB temporary on the main stack
     for (n, line) in lines.iter().enumerate() {
         let scale = if n == 0 { HEADING_SCALE } else { BODY_SCALE };
         let width = line.chars().count() * ADVANCE * scale;
@@ -38,24 +38,63 @@ fn show<D: FrameDisplay>(
     display.show(frame)
 }
 
-/// What to do when the device has nothing to connect with: join the portal
-/// network in your browser. Names the setup button, which is how a user
-/// gets back here later without a cable.
-pub fn instructions<D: FrameDisplay>(display: &mut D, frame: &mut Frame) -> Result<(), D::Error> {
-    show(
-        display,
-        frame,
-        &[
-            "Comack setup",
-            "",
-            "1. Join the Wi-Fi network  comack-setup",
-            "2. Open  http://192.168.4.1",
-            "3. Enter your Wi-Fi and server, then Save",
-            "",
-            "To change these later: hold the",
-            "LEFT (back) button for 3 seconds.",
-        ],
-    )
+/// Left edge of the instruction text and the QR's position on its right.
+const TEXT_X: usize = 30;
+const QR_X: usize = 540;
+const QR_Y: usize = 130;
+/// QR module size in pixels: version 3 (29 modules) spans 203 px.
+const QR_MODULE_PX: usize = 7;
+
+/// What to do when the device has nothing to connect with: join the
+/// password-protected portal network (scan the QR or type the password) and
+/// open the form. Names the setup gesture, which is how a user gets back
+/// here later without a cable.
+pub fn instructions<D: FrameDisplay>(
+    display: &mut D,
+    frame: &mut Frame,
+    ssid: &str,
+    password: &str,
+    url: &str,
+) -> Result<(), D::Error> {
+    frame.fill(0xFF);
+    let heading = "Comack setup";
+    let heading_x = FRAME_WIDTH - heading.len() * ADVANCE * HEADING_SCALE;
+    draw_text_scaled(frame, heading_x / 2, 30, HEADING_SCALE, heading);
+
+    let (ssid_line, password_line, url_line) = (
+        format!("   {ssid}"),
+        format!("   Password: {password}"),
+        format!("   {url}"),
+    );
+    let lines = [
+        "1. Scan the QR code, or",
+        "   join Wi-Fi:",
+        &ssid_line,
+        &password_line,
+        "",
+        "2. Open",
+        &url_line,
+        "",
+        "3. Fill in the form, Save",
+    ];
+    for (n, line) in lines.iter().enumerate() {
+        draw_text_scaled(
+            frame,
+            TEXT_X,
+            100 + n * PITCH * BODY_SCALE,
+            BODY_SCALE,
+            line,
+        );
+    }
+    // A missing QR is not fatal: the typed password above still works.
+    if let Some(payload) = wifi_join_payload(ssid, password) {
+        let _ = draw_qr(frame, QR_X, QR_Y, QR_MODULE_PX, &payload);
+    }
+
+    let footer = "Change later: hold all 3 buttons 10 s";
+    let footer_x = FRAME_WIDTH - footer.len() * ADVANCE * BODY_SCALE;
+    draw_text_scaled(frame, footer_x / 2, 420, BODY_SCALE, footer);
+    display.show(frame)
 }
 
 /// Acknowledge a saved configuration while the portal closes.
@@ -63,9 +102,9 @@ pub fn saved<D: FrameDisplay>(display: &mut D, frame: &mut Frame) -> Result<(), 
     show(display, frame, &["Saved!", "", "Joining your Wi-Fi..."])
 }
 
-/// Connecting steps: joining Wi-Fi, then reaching the server. Names the
-/// network being joined; the tailnet step (when one exists) follows.
-pub fn connecting<D: FrameDisplay>(
+/// Joining the configured Wi-Fi. Names the SSID; failures upgrade to
+/// [`wifi_stuck`] after a timeout while the supervisor keeps retrying.
+pub fn connecting_wifi<D: FrameDisplay>(
     display: &mut D,
     frame: &mut Frame,
     ssid: &str,
@@ -74,9 +113,48 @@ pub fn connecting<D: FrameDisplay>(
         display,
         frame,
         &[
-            "Connecting",
-            &format!("Wi-Fi: {ssid}"),
-            "Looking for the comic server...",
+            "Joining Wi-Fi",
+            &format!("{ssid}"),
+            "",
+            "2.4 GHz only. Waiting for an IP...",
+        ],
+    )
+}
+
+/// Wi-Fi will not associate. Names the SSID and the way back to setup;
+/// the supervisor keeps rotating / retrying underneath.
+pub fn wifi_stuck<D: FrameDisplay>(
+    display: &mut D,
+    frame: &mut Frame,
+    ssid: &str,
+) -> Result<(), D::Error> {
+    show(
+        display,
+        frame,
+        &[
+            "Wi-Fi not connecting",
+            &format!("{ssid}"),
+            "",
+            "Check SSID, password, and that the",
+            "network is 2.4 GHz (not 5 GHz only).",
+            "Hold all 3 buttons 10 s to reconfigure",
+        ],
+    )
+}
+
+/// Tailscale registration has started; the control plane can take a while.
+pub fn joining_tailscale<D: FrameDisplay>(
+    display: &mut D,
+    frame: &mut Frame,
+) -> Result<(), D::Error> {
+    show(
+        display,
+        frame,
+        &[
+            "Joining Tailscale",
+            "",
+            "Registering this device on the",
+            "tailnet. This can take a minute.",
         ],
     )
 }
@@ -93,9 +171,9 @@ pub fn tailscale_stuck<D: FrameDisplay>(
         &[
             "Tailscale not connecting",
             "",
-            "Check the auth key on the server's",
-            "admin page, then retry:",
-            "hold LEFT (back) 3 s to reconfigure",
+            "Check the auth key (tskey-auth-...),",
+            "then retry:",
+            "hold all 3 buttons 10 s to reconfigure",
         ],
     )
 }
@@ -114,9 +192,9 @@ pub fn server_unreachable<D: FrameDisplay>(
             "Can't reach the server",
             &format!("{host}:{port}"),
             "",
-            "Check the server is running,",
-            "then this screen clears itself.",
-            "Reconfigure: hold LEFT (back) 3 s",
+            "Is the server up? On the right",
+            "network / tailnet?",
+            "Hold all 3 buttons 10 s to reconfigure",
         ],
     )
 }

@@ -3,243 +3,286 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Comack — Continuous Surreal Comic Display</title>
+  <title>Comack — your room’s comic strip</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Remap Tailwind's indigo scale to a teal ink accent so existing view code
+    // picks up the friendlier palette without a mass class rename.
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            indigo: {
+              200: '#b6ebe0',
+              300: '#7dd3c0',
+              400: '#4db8a5',
+              500: '#2a9d8f',
+              600: '#21867a',
+              700: '#1a6b62',
+              800: '#164f49',
+              900: '#123c38',
+              950: '#0c2825',
+            },
+          },
+          fontFamily: {
+            sans: ['"DM Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Space+Mono:wght@400;700&display=swap');
-    body { font-family: 'Space Grotesk', sans-serif; background-color: #0f1117; color: #e2e8f0; }
-    .mono { font-family: 'Space Mono', monospace; }
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+    :root {
+      --ink: #1c1916;
+      --ink-2: #26211c;
+      --ink-3: #342e27;
+      --line: #3d362e;
+      --paper: #f3ece2;
+      --fog: #a39a8e;
+      --mist: #cfc6b8;
+      --accent: #2a9d8f;
+      --hold: #d4a017;
+    }
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(42, 157, 143, 0.12), transparent 55%),
+        radial-gradient(900px 500px at 90% 0%, rgba(212, 160, 23, 0.08), transparent 50%),
+        var(--ink);
+      color: #f0ebe3;
+    }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+    .card {
+      background: color-mix(in srgb, var(--ink-2) 92%, #000);
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+    }
     .epaper-frame {
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5), inset 0 0 0 12px #262936;
+      background: linear-gradient(160deg, #ebe4d8, var(--paper));
+      box-shadow:
+        0 18px 40px -18px rgba(0, 0, 0, 0.55),
+        inset 0 0 0 10px #2a251f;
+    }
+    .brand-mark {
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 0 0 0 1px rgba(243, 236, 226, 0.2);
     }
     .stealth-glow {
-      box-shadow: 0 0 15px rgba(234, 179, 8, 0.4);
+      box-shadow: 0 0 18px rgba(212, 160, 23, 0.28);
     }
+    #view-dashboard .card-title { letter-spacing: 0.01em; }
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
   </style>
 </head>
 <body class="min-h-screen flex flex-col">
 
-  <!-- Header -->
-  <header class="border-b border-gray-800 bg-[#161922] px-6 py-4 flex items-center justify-between gap-4 sticky top-0 z-50">
-    <div class="flex items-center space-x-3 min-w-0">
-      <div class="w-8 h-8 rounded bg-white text-black font-black flex items-center justify-center text-xl tracking-tighter shrink-0">C!</div>
+  <header class="border-b border-[var(--line)] bg-[var(--ink-2)]/90 backdrop-blur px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-50">
+    <div class="flex items-center gap-3 min-w-0">
+      <div class="brand-mark w-9 h-9 rounded-lg font-bold flex items-center justify-center text-lg tracking-tight shrink-0">C</div>
       <div class="min-w-0">
-        <h1 class="text-lg font-bold tracking-wide">COMACK</h1>
-        <p id="identityLine" class="text-xs text-gray-400 mono truncate"></p>
+        <h1 class="text-lg font-bold tracking-tight leading-none">Comack</h1>
+        <p id="identityLine" class="text-xs text-[var(--fog)] mono truncate mt-0.5"></p>
       </div>
     </div>
 
-    <nav class="flex items-center space-x-1" role="tablist" aria-label="Dashboard views">
-      <button data-view="dashboard" aria-selected="true" class="text-xs mono px-3 py-1.5 rounded-md border border-transparent text-indigo-300 border-indigo-500 hover:text-gray-200">Dashboard</button>
-      <button data-view="archive" aria-selected="false" class="text-xs mono px-3 py-1.5 rounded-md border border-transparent text-gray-400 hover:text-gray-200">Archive</button>
-      <button data-view="settings" aria-selected="false" class="text-xs mono px-3 py-1.5 rounded-md border border-transparent text-gray-400 hover:text-gray-200">Settings</button>
+    <nav class="flex items-center gap-1 order-3 sm:order-none w-full sm:w-auto justify-center" role="tablist" aria-label="Views">
+      <button data-view="dashboard" aria-selected="true" class="text-sm px-3 py-1.5 rounded-lg border border-transparent text-indigo-300 border-indigo-500">Home</button>
+      <button data-view="archive" aria-selected="false" class="text-sm px-3 py-1.5 rounded-lg border border-transparent text-[var(--fog)] hover:text-[var(--mist)]">Archive</button>
+      <button data-view="settings" aria-selected="false" class="text-sm px-3 py-1.5 rounded-lg border border-transparent text-[var(--fog)] hover:text-[var(--mist)]">Settings</button>
     </nav>
 
-    <div class="flex items-center space-x-4">
-      <a href="/reader" class="text-xs mono px-3 py-1.5 rounded-md border border-gray-700 hover:border-indigo-500 hover:text-indigo-300">📖 Reader</a>
-      <div id="connectionStatus" class="flex items-center space-x-2 text-xs mono px-3 py-1 rounded-full bg-red-950/80 text-red-400 border border-red-800">
-        <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-        <span>CONNECTING...</span>
+    <div class="flex items-center gap-2 sm:gap-3 ml-auto">
+      <a href="/reader" class="text-sm px-3 py-1.5 rounded-lg border border-[var(--line)] text-[var(--mist)] hover:border-indigo-500 hover:text-indigo-300">Reader</a>
+      <div id="connectionStatus" class="flex items-center gap-2 text-xs mono px-2.5 py-1 rounded-full bg-red-950/70 text-red-300 border border-red-900/80">
+        <span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
+        <span>Connecting…</span>
       </div>
-      <button id="generateBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-md transition shadow">
-        ⚡ Generate Comic Now
+      <button id="generateBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm px-3.5 py-2 rounded-lg transition">
+        New comic
       </button>
     </div>
   </header>
 
   <main class="flex-1 flex flex-col">
 
-    <!-- ═══════════════ Dashboard view ═══════════════ -->
-    <section id="view-dashboard" class="flex-1 p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <section id="view-dashboard" class="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-5">
 
-      <!-- Left Column: Display & Sneaky Radar (8 cols) -->
-      <div class="lg:col-span-8 flex flex-col space-y-6">
+      <div class="lg:col-span-8 flex flex-col gap-5">
 
-        <!-- Story Arc Cards: one per device, labeled with its room -->
         <div id="arcCards" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
 
-        <!-- Sneaky Comic Radar Card (hidden while the silence gate is off) -->
-        <div id="sneakyCard" class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <span class="text-base font-bold">Sneaky Comic Mode</span>
-              <span id="sneakyBadge" class="text-xs mono font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400">IDLE</span>
+        <div id="sneakyCard" class="card p-5 flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-center gap-2">
+              <span class="card-title text-base font-bold">Quiet reveal</span>
+              <span id="sneakyBadge" class="text-xs mono font-semibold px-2 py-0.5 rounded-md bg-[var(--ink-3)] text-[var(--fog)]">Waiting</span>
             </div>
-            <div class="text-xs mono text-gray-400">Strict Silence Required: <span id="reqSilence">50</span>s</div>
+            <div class="text-xs text-[var(--fog)]">Needs <span id="reqSilence" class="mono text-[var(--mist)]">50</span>s of quiet</div>
           </div>
 
-          <!-- Progress Bar for Silence Countdown -->
           <div>
-            <div class="flex justify-between text-xs mono text-gray-400 mb-1">
-              <span>Room Silence Timer</span>
-              <span><strong id="currentSilence" class="text-white">0.0</strong>s</span>
+            <div class="flex justify-between text-xs text-[var(--fog)] mb-1.5">
+              <span>Room quiet so far</span>
+              <span><strong id="currentSilence" class="text-[var(--paper)] mono">0.0</strong>s</span>
             </div>
-            <div class="w-full bg-gray-800 rounded-full h-3 overflow-hidden p-0.5 border border-gray-700">
+            <div class="w-full bg-[var(--ink)] rounded-full h-2.5 overflow-hidden border border-[var(--line)]">
               <div id="silenceProgressBar" class="bg-emerald-500 h-full rounded-full transition-all duration-300" style="width: 0%"></div>
             </div>
           </div>
 
-          <div id="stealthQueueAlert" class="hidden bg-amber-950/40 border border-amber-800/80 rounded-lg p-3 flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-              <span class="text-xl">🤫</span>
-              <div>
-                <div class="text-xs font-bold text-amber-300">Comic <span id="pendingIssue">#000</span> Waiting in Stealth Queue!</div>
-                <div class="text-xs text-amber-400/80">Will silently refresh e-paper when room reaches complete quiet.</div>
-              </div>
+          <div id="stealthQueueAlert" class="hidden bg-amber-950/35 border border-amber-800/70 rounded-xl p-3.5 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div class="text-sm font-semibold text-amber-200">Issue <span id="pendingIssue">#000</span> is ready — waiting for quiet</div>
+              <div class="text-xs text-amber-200/70 mt-0.5">It’ll flip the display when the room settles.</div>
             </div>
-            <button id="forceRevealBtn" class="text-xs mono bg-amber-600 hover:bg-amber-500 text-black font-bold px-3 py-1.5 rounded shadow">
-              Force Reveal
+            <button id="forceRevealBtn" class="text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-ink px-3 py-1.5 rounded-lg text-[var(--ink)]">
+              Show now
             </button>
           </div>
         </div>
 
-        <!-- Live e-Paper Comic Viewer (800x480 aspect) -->
-        <div class="flex flex-col space-y-2">
-          <div class="flex items-center justify-between text-xs mono text-gray-400">
-            <span>e-Paper Display (800×480 1-bit)</span>
-            <span id="currentIssueTag">Active Issue: #---</span>
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center justify-between text-xs text-[var(--fog)]">
+            <span>What’s on the display</span>
+            <span id="currentIssueTag" class="mono">Issue #---</span>
           </div>
 
-          <div class="epaper-frame bg-[#e2e4e9] rounded-xl p-4 flex items-center justify-center overflow-hidden border border-gray-700">
-            <img id="comicImage" src="/api/comics/current.png" alt="Current Comic Screen"
-                 class="w-full max-w-[800px] h-auto rounded border border-gray-400 shadow-md bg-white object-contain"
-                 onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'800\' height=\'480\'><rect width=\'800\' height=\'480\' fill=\'white\'/><text x=\'50%27 y=\'50%27 text-anchor=\'middle\' font-size=\'24\' font-family=\'sans-serif\'>Generating initial comic...</text></svg>'">
+          <div class="epaper-frame rounded-2xl p-3 sm:p-4 flex items-center justify-center overflow-hidden">
+            <img id="comicImage" src="/api/comics/current.png" alt="Current comic on the display"
+                 class="w-full max-w-[800px] h-auto rounded-md border border-black/10 shadow-sm bg-white object-contain"
+                 onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'800\' height=\'480\'><rect width=\'800\' height=\'480\' fill=\'%23f3ece2\'/><text x=\'50%25\' y=\'50%25\' text-anchor=\'middle\' font-size=\'22\' font-family=\'DM Sans,sans-serif\' fill=\'%23342e27\'>Cooking up the first issue…</text></svg>'">
           </div>
-          <div class="flex justify-between items-center text-xs text-gray-500 mono pt-1">
-            <a href="/api/comics/current.bin" download="current.bin" class="hover:text-indigo-400 underline">Download Raw 1-bit EPD Buffer (.bin)</a>
-            <span id="lastRefreshedAt">Last Screen Update: --</span>
+          <div class="flex justify-between items-center text-xs text-[var(--fog)] pt-0.5 gap-3 flex-wrap">
+            <a href="/api/comics/current.bin" download="current.bin" class="hover:text-indigo-300 underline underline-offset-2">Download display buffer</a>
+            <span id="lastRefreshedAt">Updated —</span>
           </div>
         </div>
 
-        <!-- Originals of the issue shown above (only issues rendered since originals are kept) -->
-        <div id="originals" class="hidden flex flex-col space-y-2">
-          <div class="text-xs mono text-gray-400">Colour composite (before halftoning)</div>
-          <img id="colorImage" alt="Colour composite" class="w-full max-w-[800px] h-auto rounded border border-gray-700">
-          <div class="text-xs mono text-gray-400 pt-2">Raw panel art (click for full size)</div>
+        <div id="originals" class="hidden flex flex-col gap-2">
+          <div class="text-xs text-[var(--fog)]">Full-color page (before e-ink dithering)</div>
+          <img id="colorImage" alt="Colour composite" class="w-full max-w-[800px] h-auto rounded-xl border border-[var(--line)]">
+          <div class="text-xs text-[var(--fog)] pt-1">Panel art — click to open</div>
           <div id="panelList" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
         </div>
 
       </div>
 
-      <!-- Right Column: Live Audio, Transcripts & Simulation (4 cols) -->
-      <div class="lg:col-span-4 flex flex-col space-y-6">
+      <div class="lg:col-span-4 flex flex-col gap-5">
 
-        <!-- Audio & VAD Card -->
-        <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-4">
+        <div class="card p-5 flex flex-col gap-4">
           <div class="flex items-center justify-between gap-2">
-            <span class="text-sm font-bold">Microphone Audio Stream</span>
-            <div class="flex items-center space-x-2">
+            <span class="card-title text-sm font-bold">Listening</span>
+            <div class="flex items-center gap-2">
               <div id="buttonPressChip" class="hidden"></div>
-              <div id="vadIndicator" class="flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
-                <span class="w-2 h-2 rounded-full bg-gray-500"></span>
-                <span>SILENCE</span>
+              <div id="vadIndicator" class="flex items-center gap-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-[var(--ink-3)] text-[var(--fog)] border border-[var(--line)]">
+                <span class="w-2 h-2 rounded-full bg-[var(--fog)]"></span>
+                <span>Quiet</span>
               </div>
             </div>
           </div>
 
-          <div class="p-3 bg-gray-900/80 rounded-lg border border-gray-800 text-xs text-gray-400 space-y-1">
-            <div>• Microphone streams 16kHz PCM to this server</div>
-            <div>• Privacy: Raw speech discarded immediately</div>
-            <div>• Thematic Mining: Mined for vibes/elements, never quoted</div>
+          <div class="p-3 rounded-xl bg-[var(--ink)]/70 border border-[var(--line)] text-xs text-[var(--mist)] space-y-1.5 leading-relaxed">
+            <div>The mic streams audio to this server only.</div>
+            <div>Raw speech is thrown away — only scrambled “room notes” are kept for the story.</div>
           </div>
 
-          <!-- Simulation Tool -->
-          <div class="border-t border-gray-800 pt-3">
-            <label class="block text-xs mono text-gray-400 mb-1">Simulate Room Speech (Test Audio):</label>
-            <div class="flex space-x-2">
-              <input id="simInput" type="text" placeholder="e.g. Can you turn off the oven before we leave?"
-                     class="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white flex-1 focus:outline-none focus:border-indigo-500">
-              <button id="sendSim" class="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-1.5 rounded font-mono">
+          <div class="border-t border-[var(--line)] pt-3">
+            <label class="block text-xs text-[var(--fog)] mb-1.5">Try a line (pretend someone said it)</label>
+            <div class="flex gap-2">
+              <input id="simInput" type="text" placeholder="e.g. Did you leave the kettle on?"
+                     class="bg-[var(--ink)] border border-[var(--line)] rounded-lg px-3 py-2 text-sm text-[var(--paper)] flex-1 focus:outline-none focus:border-indigo-500">
+              <button id="sendSim" class="bg-[var(--ink-3)] hover:bg-[var(--line)] text-[var(--paper)] text-sm px-3 py-2 rounded-lg font-medium">
                 Send
               </button>
             </div>
           </div>
         </div>
 
-        <!-- Dialogue Feed Card -->
-        <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col flex-1 space-y-3">
+        <div class="card p-5 flex flex-col flex-1 gap-3">
           <div class="flex items-center justify-between">
-            <span class="text-sm font-bold">Mined Story Elements (30-min window)</span>
-            <span id="transcriptCount" class="text-xs mono text-gray-400">0 elements</span>
+            <span class="card-title text-sm font-bold">Room notes</span>
+            <span id="transcriptCount" class="text-xs text-[var(--fog)]">0 notes</span>
           </div>
 
-          <div id="transcriptList" data-empty="true" class="flex-1 max-h-[360px] overflow-y-auto space-y-2 pr-1 text-xs mono">
-            <div class="text-gray-500 italic p-3 text-center">Listening for ambient room activity...</div>
+          <div id="transcriptList" data-empty="true" class="flex-1 max-h-[360px] overflow-y-auto space-y-2 pr-1 text-sm">
+            <div class="text-[var(--fog)] italic p-4 text-center text-sm">Waiting for a little chatter…</div>
           </div>
         </div>
 
       </div>
 
-      <!-- Devices: one card per registered device, each with its own current comic -->
-      <div class="lg:col-span-12 flex flex-col space-y-3">
+      <div class="lg:col-span-12 flex flex-col gap-3">
         <div class="flex items-center justify-between">
-          <span class="text-sm font-bold">Devices</span>
-          <span id="deviceCount" class="text-xs mono text-gray-400">0 registered</span>
+          <span class="card-title text-sm font-bold">Rooms &amp; devices</span>
+          <span id="deviceCount" class="text-xs text-[var(--fog)]">0 registered</span>
         </div>
         <div id="deviceCards" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
       </div>
 
-      <!-- Prompt Debug Log (server memory only; transcripts appear only after the first scramble) -->
-      <div class="lg:col-span-12 bg-[#161922] border border-gray-800 rounded-xl p-5 flex flex-col space-y-3">
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-bold">Model Prompts &amp; Outputs</span>
-          <span id="promptCount" class="text-xs mono text-gray-400">0 calls</span>
+      <details class="lg:col-span-12 card p-5 group">
+        <summary class="flex items-center justify-between cursor-pointer list-none">
+          <span class="card-title text-sm font-bold">Recent model calls</span>
+          <span class="flex items-center gap-3">
+            <span id="promptCount" class="text-xs text-[var(--fog)]">0 calls</span>
+            <span class="text-xs text-[var(--fog)] group-open:hidden">Show</span>
+            <span class="text-xs text-[var(--fog)] hidden group-open:inline">Hide</span>
+          </span>
+        </summary>
+        <div id="promptList" class="max-h-[480px] overflow-y-auto space-y-1.5 text-xs mono mt-4">
+          <div class="text-[var(--fog)] italic">Nothing in the last 15 minutes.</div>
         </div>
-        <div id="promptList" class="max-h-[600px] overflow-y-auto space-y-1.5 text-xs mono">
-          <div class="text-gray-500 italic">No model calls in the last 15 minutes.</div>
-        </div>
-      </div>
+      </details>
 
     </section>
 
-    <!-- ═══════════════ Archive view ═══════════════ -->
-    <section id="view-archive" class="hidden flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
-      <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 space-y-4">
+    <section id="view-archive" class="hidden flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-5">
+      <div class="card p-5 space-y-4">
         <div>
-          <h2 class="text-lg font-bold text-white">Story Arcs</h2>
-          <p class="text-xs text-gray-500">Chronological arcs — click one to filter its issues; click an issue to open it in the Reader.</p>
+          <h2 class="text-lg font-bold">Story arcs</h2>
+          <p class="text-sm text-[var(--fog)] mt-1">Each arc is its own series. Pick one to filter issues, or open an issue in the Reader.</p>
         </div>
         <div id="arcTimeline" class="flex gap-3 overflow-x-auto pb-2"></div>
       </div>
-      <div class="bg-[#161922] border border-gray-800 rounded-xl p-5 space-y-4">
+      <div class="card p-5 space-y-4">
         <div class="flex items-center justify-between gap-4 flex-wrap">
-          <h2 class="text-lg font-bold text-white">Issue Archive</h2>
+          <h2 class="text-lg font-bold">Issues</h2>
           <div class="flex flex-col items-end gap-2">
             <div id="deviceFilter" class="flex flex-wrap gap-2"></div>
             <div id="arcFilter" class="flex flex-wrap gap-2"></div>
           </div>
         </div>
-        <div id="archiveEmpty" class="hidden text-gray-500 italic text-sm text-center py-8">No comics yet — trigger one with “Generate Comic Now” or wait for the 30-minute cycle.</div>
+        <div id="archiveEmpty" class="hidden text-[var(--fog)] italic text-sm text-center py-10">No issues yet — tap “New comic” or wait for the next hourly cycle.</div>
         <div id="archiveGrid" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
       </div>
     </section>
 
-    <!-- ═══════════════ Settings view ═══════════════ -->
-    <section id="view-settings" class="hidden flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
+    <section id="view-settings" class="hidden flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-5">
       <div class="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h2 class="text-lg font-bold text-white">Settings</h2>
-          <p class="text-xs text-gray-500">Every server setting, grouped like <span class="mono">server/config.py</span>. Values apply immediately unless marked “restart”.</p>
+          <h2 class="text-lg font-bold">Settings</h2>
+          <p class="text-sm text-[var(--fog)] mt-1">Most changes apply right away. Anything marked “restart” needs a server restart.</p>
         </div>
         <div class="flex items-center gap-4">
-          <label class="flex items-center gap-2 text-xs mono text-gray-400 cursor-pointer">
-            <input id="revealSecrets" type="checkbox" class="w-4 h-4 accent-indigo-500"> reveal secrets
+          <label class="flex items-center gap-2 text-sm text-[var(--fog)] cursor-pointer">
+            <input id="revealSecrets" type="checkbox" class="w-4 h-4 accent-indigo-500"> Show secrets
           </label>
-          <button id="saveSettings" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-md transition shadow">Save Changes</button>
+          <button id="saveSettings" class="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm px-4 py-2 rounded-lg transition">Save</button>
         </div>
       </div>
       <div id="settingsNotices" class="space-y-2"></div>
-      <!-- Devices: the registry behind per-device identity — add (token shown once), rename, last-seen -->
-      <div id="devicesCard" class="bg-[#161922] border border-gray-800 rounded-xl p-5 space-y-4"></div>
-      <div id="settingsGroups" class="space-y-6"></div>
+      <div id="settingsGroups" class="space-y-5"></div>
+      <div id="devicesCard" class="card p-5 space-y-4"></div>
     </section>
 
   </main>
 
-  <!-- Overlays -->
   <div id="token-prompt-root"></div>
   <div id="onboarding-root"></div>
 
-  <script type="module" src="/static/js/main.js"></script>
+  <script type="module" src="/static/js/main.js?v=friendly-1"></script>
 </body>
 </html>

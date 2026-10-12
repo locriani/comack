@@ -102,7 +102,7 @@ impl Tailnet {
     }
 
     /// Whether the node has registered with the tailnet — for bounded
-    /// waits that must stay responsive to the setup button.
+    /// waits that must stay responsive to the setup gesture.
     pub fn registered(&self) -> &crate::latch::Latch {
         self.registered
     }

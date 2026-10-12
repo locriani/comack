@@ -1,12 +1,9 @@
-"""Onboarding wizard: external-api step contract + Finish-step merge order.
+"""Onboarding wizard: image API step contract + Finish-step merge order.
 
-Spec art_QJPXX3Gd criterion 7 (plus its adjacent-bug callout): the wizard's
-external-api step must describe the real remote contract (OpenAI-compatible
-``/v1/images/generations`` returning base64 or a URL) with FLUX_API_KEY /
-FLUX_API_MODEL fields, and the Finish-step merge must let typed values win
-over preset sample values — the external-api preset ships
-``http://your-llm-host:8080/`` as a sample LLM_URL that used to overwrite
-what the user typed in the Story LLM step.
+The image step is OpenAI-compatible (URL / model / API key), same shape as
+Story LLM — not gated behind an "External Image API" card. Finish-step merge
+must let typed values win over preset sample values (legacy external-api
+preset ships ``http://your-llm-host:8080/`` that used to overwrite Story LLM).
 """
 
 import json
@@ -22,29 +19,48 @@ ONBOARDING_JS = JS_ROOT / "views" / "onboarding.js"
 # ── wizard contract (static check: the copy names the real endpoint) ─────
 
 
-def test_external_api_step_names_the_real_contract():
+def test_image_step_names_the_real_contract():
     src = ONBOARDING_JS.read_text()
     assert "/v1/images/generations" in src   # real endpoint, /v1-aware join
-    assert "base64" in src                   # real response contract (b64 or URL)
-    assert "http://gpu-box:8000" in src      # realistic base-URL placeholder
+    assert "OpenAI-compatible image" in src
+    assert "http://localhost:8000/v1" in src
     assert "POST /generate" not in src       # the invented contract is gone
     assert "8790" not in src
+    assert "External Image API" not in src   # no vendor/preset gate for the API fields
 
 
-def test_external_api_step_has_key_and_model_fields():
+def test_image_step_has_key_and_model_fields():
     src = ONBOARDING_JS.read_text()
-    assert "label('FLUX_API_MODEL'" in src
     assert "boundInput('FLUX_API_MODEL'" in src
-    assert "label('FLUX_API_KEY'" in src
-    # the key rides masked-echo rules: a password input, dropped when unchanged
-    assert "boundInput('FLUX_API_KEY', { type: 'password'" in src
-    assert "'FLUX_API_KEY'" in src.split("buildFinishUpdates")[1]
+    assert "boundInput('FLUX_API_KEY'" in src
+    assert "type: 'password'" in src
+    # always saved from Finish — not gated on an external-api preset
+    finish = src.split("buildFinishUpdates")[1]
+    assert "FLUX_API_KEY: state.FLUX_API_KEY.trim()" in finish
+    assert "FLUX_API_MODEL: state.FLUX_API_MODEL.trim()" in finish
+    assert "api_key: state.FLUX_API_KEY" in src
+
+
+def test_llm_step_has_api_key_field():
+    src = ONBOARDING_JS.read_text()
+    assert "OpenAI-compatible" in src
+    assert "Use OpenRouter" not in src
+    assert "label('API key'" in src
+    assert "boundInput('LLM_API_KEY'" in src
+    assert "type: 'password'" in src.split("boundInput('LLM_API_KEY'")[1].split(")")[0]
+    assert "'LLM_API_KEY'" in src.split("buildFinishUpdates")[1]
+    assert "api_key: state.LLM_API_KEY" in src
 
 
 # ── finish merge (behavioral: execute the real module under Node) ────────
 
-PROBE = """import { buildFinishUpdates } from './views/onboarding.js';
-console.log(JSON.stringify(buildFinishUpdates(JSON.parse(process.argv[2]))));
+PROBE = """import { buildFinishUpdates, scrubPresetValues } from './views/onboarding.js';
+const state = JSON.parse(process.argv[2]);
+if (state.__scrub_only) {
+  console.log(JSON.stringify(scrubPresetValues(state.presetValues)));
+} else {
+  console.log(JSON.stringify(buildFinishUpdates(state)));
+}
 """
 
 
@@ -81,6 +97,7 @@ EXTERNAL_API_STATE = {
     },
     "LLM_URL": "http://typed-llm:1234/v1",
     "LLM_MODEL": "qwen2.5-7b-instruct",
+    "LLM_API_KEY": "",
     "WHISPER_MODEL_SIZE": "base.en",
     "FLUX_API_URL": "http://typed-gpu:8000",
     "FLUX_MODEL_ID": "",
@@ -122,10 +139,16 @@ class TestFinishMerge:
     def test_masked_key_echo_is_dropped(self, wizard_module):
         # config_api.py masks stored secrets; echoing '********' back in the
         # wizard's PATCH would overwrite the real key with asterisks.
-        state = {**EXTERNAL_API_STATE, "FLUX_API_KEY": "********"}
+        state = {**EXTERNAL_API_STATE, "FLUX_API_KEY": "********", "LLM_API_KEY": "********"}
         updates = run_finish_merge(wizard_module, **state)
         assert "FLUX_API_KEY" not in updates
+        assert "LLM_API_KEY" not in updates
         assert updates["FLUX_API_MODEL"] == ""  # not secret-shaped: sent as-is
+
+    def test_typed_llm_api_key_is_applied_trimmed(self, wizard_module):
+        state = {**EXTERNAL_API_STATE, "LLM_API_KEY": " sk-or-v1-test "}
+        updates = run_finish_merge(wizard_module, **state)
+        assert updates["LLM_API_KEY"] == "sk-or-v1-test"
 
     def test_masked_llm_url_credentials_are_not_echoed(self, wizard_module):
         # URL-credential masking embeds the sentinel mid-string
@@ -133,11 +156,12 @@ class TestFinishMerge:
         updates = run_finish_merge(wizard_module, **state)
         assert "LLM_URL" not in updates
 
-    def test_key_and_model_apply_only_for_the_external_api_preset(self, wizard_module):
-        state = {**EXTERNAL_API_STATE, "preset": "local-gpu", "FLUX_API_KEY": "sk-test-123"}
+    def test_image_api_key_and_model_always_apply(self, wizard_module):
+        state = {**EXTERNAL_API_STATE, "preset": "local-gpu",
+                 "FLUX_API_KEY": "sk-test-123", "FLUX_API_MODEL": "my-model"}
         updates = run_finish_merge(wizard_module, **state)
-        assert "FLUX_API_KEY" not in updates
-        assert "FLUX_API_MODEL" not in updates
+        assert updates["FLUX_API_KEY"] == "sk-test-123"
+        assert updates["FLUX_API_MODEL"] == "my-model"
 
     def test_no_preset_still_saves_typed_llm(self, wizard_module):
         state = {**EXTERNAL_API_STATE, "preset": None, "presetValues": {}}
@@ -145,3 +169,34 @@ class TestFinishMerge:
         assert updates["LLM_URL"] == "http://typed-llm:1234/v1"
         assert "FLUX_DEVICE" not in updates
         assert updates["ONBOARDED"] is True
+
+    def test_placeholder_preset_urls_are_not_persisted(self, wizard_module):
+        # Leaving image URL blank used to write http://your-image-host:8000
+        # from the preset into .env.
+        state = {
+            **EXTERNAL_API_STATE,
+            "FLUX_API_URL": "",
+            "LLM_URL": "http://typed-llm:1234/v1",
+            "LLM_API_KEY": "sk-test",
+        }
+        updates = run_finish_merge(wizard_module, **state)
+        assert updates["LLM_URL"] == "http://typed-llm:1234/v1"
+        assert updates["FLUX_API_URL"] == ""
+        assert "your-" not in updates.get("FLUX_API_URL", "")
+        assert updates["FLUX_DEVICE"] == "cpu"  # non-placeholder preset value still applies
+
+    def test_scrub_preset_values_drops_your_hosts(self, wizard_module):
+        proc = subprocess.run(
+            ["node", str(wizard_module), json.dumps({
+                "__scrub_only": True,
+                "presetValues": {
+                    "LLM_URL": "http://your-llm-host:8080/",
+                    "FLUX_API_URL": "http://your-image-host:8000",
+                    "FLUX_DEVICE": "cpu",
+                },
+            })],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 0, proc.stderr
+        scrubbed = json.loads(proc.stdout.strip().splitlines()[-1])
+        assert scrubbed == {"FLUX_DEVICE": "cpu"}
