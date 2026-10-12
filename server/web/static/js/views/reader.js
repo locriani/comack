@@ -6,6 +6,7 @@
  * bookshelf to one room; the select hides itself for single-device libraries.
  */
 import { apiJson } from '../api.js';
+import { arcBibleDetails } from '../arc-bible.js';
 
 const $ = (id) => document.getElementById(id);
 let arcs = [], issues = [], at = 0, color = false;
@@ -34,7 +35,11 @@ function show(k) {
     return a;
   }));
   $('arcTitle').textContent = arc.title;
-  $('arcMeta').textContent = `${arc.genre} \u00b7 ${arc.status.toLowerCase()} \u00b7 ${deviceNames[arc.device_id] ?? arc.device_id ?? ''} \u00b7 ${arc.premise}`;
+  $('arcMeta').textContent = `${arc.genre} \u00b7 ${arc.status.toLowerCase()} \u00b7 ${deviceNames[arc.device_id] ?? arc.device_id ?? ''}`;
+  const bibleHost = $('arcBible');
+  const wasOpen = !!bibleHost.querySelector('details[open]');
+  const bible = arcBibleDetails(arc, { open: wasOpen, summary: 'Full series bible — tone, art, cast, premise' });
+  bibleHost.replaceChildren(...(bible ? [bible] : []));
   $('issueLabel').replaceChildren(
     Object.assign(document.createElement('b'), { textContent: `#${String(c.series_issue).padStart(3, '0')} ${c.title}` }),
     document.createElement('br'),
