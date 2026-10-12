@@ -102,15 +102,18 @@ def two_due_devices(monkeypatch) -> FakePipelines:
     for device in ("living-room", "studio"):
         for _ in range(10):
             db.save_transcript(time.time(), 1.0, "a scrambled line", device)
+        # First cycle has no prior lines_wanted_next; pin high enough that the
+        # due-ness seed (10 lines) is fully consumed by this test's cycle.
+        db.set_state(f"lines_wanted:{device}", "10")
     return fake
-
 
 def test_two_devices_due_at_once_get_serial_unique_attributed_comics(isolated_db, monkeypatch):
     """Spec V7: one tick, both devices due — two comics, one global issue
     sequence, each attributed to its own device and queued in its own slot."""
     fake = two_due_devices(monkeypatch)
     compositor = SerialCompositor()
-    started = time.time() - 10 * 60  # past the 5-minute minimum for both devices
+    # Past COMIC_MIN/MAX so both rooms are due regardless of current defaults.
+    started = time.time() - (main_module.settings.COMIC_MAX_MINUTES + 1) * 60
     with patch.object(llm_client, "complete_json", AsyncMock(side_effect=[BIBLE, SCRIPT_REPLY, BIBLE, SCRIPT_REPLY])), \
          patch.object(main_module, "comic_compositor", compositor):
         asyncio.run(main_module.scheduler_tick(started))
@@ -162,7 +165,7 @@ def test_a_connected_room_can_be_due_while_another_is_not(isolated_db, monkeypat
     fake = two_due_devices(monkeypatch)
     fake.pipes[1].connected = False  # studio stopped streaming: never due
     compositor = SerialCompositor()
-    started = time.time() - 10 * 60
+    started = time.time() - (main_module.settings.COMIC_MAX_MINUTES + 1) * 60
     with patch.object(llm_client, "complete_json", AsyncMock(side_effect=[BIBLE, SCRIPT_REPLY])), \
          patch.object(main_module, "comic_compositor", compositor):
         asyncio.run(main_module.scheduler_tick(started))
@@ -171,3 +174,31 @@ def test_a_connected_room_can_be_due_while_another_is_not(isolated_db, monkeypat
     assert len(comics) == 1
     assert comics[0]["device_id"] == "living-room"
     assert fake.for_device("studio").dispatcher.pending == []
+
+
+def test_generation_cycle_honors_lines_wanted_and_persists_next(isolated_db, monkeypatch):
+    """Previous issue's lines_wanted_next caps the room-note batch; leftovers stay
+    queued; the new issue's lines_wanted_next is written for the following cycle."""
+    fake = FakePipelines("living-room")
+    monkeypatch.setattr(main_module, "pipelines", fake)
+    for i in range(10):
+        db.save_transcript(time.time(), 1.0, f"line {i}", "living-room")
+    db.set_state("lines_wanted:living-room", "3")
+
+    captured = {}
+
+    def compose(script):
+        captured["script"] = script
+        return Path("png"), Path("bin")
+
+    with patch.object(llm_client, "complete_json", AsyncMock(side_effect=[BIBLE, SCRIPT_REPLY])), \
+         patch.object(main_module, "comic_compositor", type("C", (), {"compose_comic": staticmethod(compose)})()):
+        asyncio.run(main_module.run_comic_generation_cycle("living-room"))
+
+    assert len(captured["script"]["dialogue_used"]) == 3
+    assert [t["scrambled_text"] for t in db.get_unprocessed_transcripts("living-room")] == [
+        f"line {i}" for i in range(3, 10)
+    ]
+    assert db.get_state("lines_wanted:living-room") == "4"  # SCRIPT_REPLY.lines_wanted_next
+    assert captured["script"]["art_style"] == "high-contrast ink"
+    assert captured["script"]["layout_type"] == "two-columns"

@@ -89,3 +89,53 @@ class TestImageProbeAuth:
         body = client.post("/api/config/test/image", json={"url": "http://render.local:8000"}).json()
         assert body["ok"] is True
         assert captured["headers"] is None
+
+
+class TestLlmKeyMasking:
+    def test_get_masks_llm_api_key(self, client):
+        settings.LLM_API_KEY = "sk-or-secret"
+        body = client.get("/api/config").json()
+        assert body["values"]["LLM_API_KEY"] == MASKED
+        assert body["fields"]["LLM_API_KEY"]["secret"] is True
+
+    def test_empty_llm_api_key_is_not_masked(self, client):
+        settings.LLM_API_KEY = ""
+        body = client.get("/api/config").json()
+        assert body["values"]["LLM_API_KEY"] == ""
+
+
+
+class TestLlmProbeAuth:
+    def test_probe_sends_bearer_header_when_key_set(self, client, monkeypatch):
+        settings.LLM_API_KEY = "sk-or-probe"
+        captured = {}
+
+        async def fake_get(url, headers=None):
+            captured["url"], captured["headers"] = url, headers
+            return httpx.Response(200, json={"data": [{"id": "m"}]})
+
+        monkeypatch.setattr(config_test, "_http_get", fake_get)
+        body = client.post(
+            "/api/config/test/llm",
+            json={"url": "https://openrouter.ai/api/v1", "model": "x"},
+        ).json()
+        assert body["ok"] is True
+        assert captured["url"] == "https://openrouter.ai/api/v1/models"
+        assert captured["headers"]["Authorization"] == "Bearer sk-or-probe"
+        assert captured["headers"]["X-OpenRouter-Title"] == "Comack"
+
+    def test_probe_masked_override_uses_saved_key(self, client, monkeypatch):
+        settings.LLM_API_KEY = "sk-or-saved"
+        captured = {}
+
+        async def fake_get(url, headers=None):
+            captured["headers"] = headers
+            return httpx.Response(200, json={"data": [{"id": "m"}]})
+
+        monkeypatch.setattr(config_test, "_http_get", fake_get)
+        body = client.post(
+            "/api/config/test/llm",
+            json={"url": "https://openrouter.ai/api/v1", "api_key": MASKED},
+        ).json()
+        assert body["ok"] is True
+        assert captured["headers"]["Authorization"] == "Bearer sk-or-saved"

@@ -11,11 +11,10 @@ import { el } from '../dom.js';
 const INPUT = 'bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white w-full focus:outline-none focus:border-indigo-500';
 const WHISPER_SIZES = ['tiny.en', 'base.en', 'small.en', 'medium.en'];
 const PRESETS = [
-  { key: 'local-gpu', name: 'Local GPU', blurb: 'Fastest and most private. Runs image generation on this machine\'s NVIDIA GPU.' },
-  { key: 'external-api', name: 'External Image API', blurb: 'Offloads image generation to a remote HTTP endpoint (e.g. another box on your tailnet).' },
-  { key: 'cpu-only', name: 'CPU only', blurb: 'No GPU required. Slower comic rendering, everything else unchanged.' },
+  { key: 'local-gpu', name: 'Local GPU', blurb: 'Prefills local rendering on this machine\'s NVIDIA GPU (leave API URL empty).' },
+  { key: 'cpu-only', name: 'CPU only', blurb: 'Prefills local rendering on CPU — slower, no GPU required.' },
 ];
-const IMAGE_KEYS = ['FLUX_MODEL_ID', 'FLUX_DEVICE', 'FLUX_INFERENCE_STEPS', 'FLUX_MIN_FREE_VRAM_GB', 'FLUX_API_URL'];
+const IMAGE_KEYS = ['FLUX_MODEL_ID', 'FLUX_DEVICE', 'FLUX_INFERENCE_STEPS', 'FLUX_MIN_FREE_VRAM_GB'];
 
 // ── finish-merge (pure, exported for tests) ────────────────────────────
 // Preset values spread first so typed fields win: the external-api preset
@@ -24,27 +23,46 @@ const IMAGE_KEYS = ['FLUX_MODEL_ID', 'FLUX_DEVICE', 'FLUX_INFERENCE_STEPS', 'FLU
 // values still beat the preset. A masked value (api.js MASKED) is the
 // server's placeholder, never new content — echoing one back would
 // overwrite the stored secret with asterisks, so it is dropped.
+// Placeholder sample values (your-llm-host, your-image-host, …) are
+// scrubbed out so Finish never persists them into .env.
+const TYPED_LLM_KEYS = ['LLM_URL', 'LLM_MODEL', 'LLM_API_KEY'];
+
+export function isPlaceholderValue(value) {
+  return typeof value === 'string' && /\byour[-_]/i.test(value);
+}
+
+export function scrubPresetValues(values) {
+  const out = {};
+  for (const [key, value] of Object.entries(values ?? {})) {
+    if (isPlaceholderValue(value)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 export function nonEmptyImageOverrides(state) {
   const out = {};
   for (const k of IMAGE_KEYS) {
     const v = String(state[k] ?? '').trim();
-    if (v !== '') out[k] = v;
+    if (v !== '' && !isPlaceholderValue(v)) out[k] = v;
   }
   return out;
 }
 
 export function buildFinishUpdates(state) {
   const updates = {
-    ...(state.preset ? { ...state.presetValues, ...nonEmptyImageOverrides(state) } : {}),
+    ...(state.preset ? { ...scrubPresetValues(state.presetValues), ...nonEmptyImageOverrides(state) } : {}),
     LLM_URL: state.LLM_URL.trim(),
     LLM_MODEL: state.LLM_MODEL.trim(),
+    LLM_API_KEY: state.LLM_API_KEY.trim(),
+    // Image API fields are first-class like Story LLM — not gated on a preset.
+    FLUX_API_URL: state.FLUX_API_URL.trim(),
+    FLUX_API_MODEL: state.FLUX_API_MODEL.trim(),
+    FLUX_API_KEY: state.FLUX_API_KEY.trim(),
     WHISPER_MODEL_SIZE: state.WHISPER_MODEL_SIZE,
-    ...(state.preset === 'external-api'
-      ? { FLUX_API_KEY: state.FLUX_API_KEY.trim(), FLUX_API_MODEL: state.FLUX_API_MODEL.trim() }
-      : {}),
     ONBOARDED: true,
   };
-  for (const key of ['LLM_URL', 'LLM_MODEL', 'FLUX_API_KEY']) {
+  for (const key of ['LLM_URL', 'LLM_MODEL', 'LLM_API_KEY', 'FLUX_API_URL', 'FLUX_API_KEY']) {
     if (isMasked(updates[key])) delete updates[key];
   }
   return updates;
@@ -55,9 +73,10 @@ export function initOnboarding(config, { onComplete }) {
   const state = {
     LLM_URL: config.values.LLM_URL ?? '',
     LLM_MODEL: config.values.LLM_MODEL ?? '',
+    // LLM_API_KEY / FLUX_API_KEY arrive masked when already set;
+    // buildFinishUpdates drops the echo so stored keys are never clobbered.
+    LLM_API_KEY: config.values.LLM_API_KEY ?? '',
     WHISPER_MODEL_SIZE: config.values.WHISPER_MODEL_SIZE ?? 'base.en',
-    // FLUX_API_KEY arrives masked (config_api.py MASKED) when already set;
-    // buildFinishUpdates drops the echo so the stored key is never clobbered.
     FLUX_API_KEY: config.values.FLUX_API_KEY ?? '',
     FLUX_API_MODEL: config.values.FLUX_API_MODEL ?? '',
     preset: null,
@@ -76,11 +95,11 @@ export function initOnboarding(config, { onComplete }) {
   backBtn.addEventListener('click', () => { if (step > 0) { step -= 1; render(); } });
   nextBtn.addEventListener('click', next);
 
-  const shell = el('div', { class: 'fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4' },
-    el('div', { class: 'bg-[#101319] border border-gray-800 rounded-2xl w-full max-w-2xl h-[36rem] flex flex-col p-6 space-y-4' },
+  const shell = el('div', { class: 'fixed inset-0 z-[60] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4' },
+    el('div', { class: 'bg-[var(--ink-2,#26211c)] border border-[var(--line,#3d362e)] rounded-2xl w-full max-w-2xl h-[40rem] max-h-[90vh] flex flex-col p-6 space-y-4 shadow-2xl' },
       el('div', { class: 'flex items-center justify-between' },
         el('div', { class: 'flex items-center gap-2' },
-          el('span', { class: 'font-logo text-lg tracking-widest text-indigo-300' }, 'COMACK SETUP')),
+          el('span', { class: 'text-lg font-bold tracking-tight text-indigo-300' }, 'Comack setup')),
         dots),
       body,
       el('div', { class: 'flex items-center justify-between pt-2 border-t border-gray-800' },
@@ -93,8 +112,11 @@ export function initOnboarding(config, { onComplete }) {
       hint ? el('span', { class: 'text-[11px] text-gray-500 ml-2' }, hint) : null);
   }
 
-  function boundInput(key, { type = 'text', placeholder = '' } = {}) {
-    const input = el('input', { type, value: state[key] ?? '', placeholder, class: INPUT, spellcheck: 'false' });
+  function boundInput(key, { type = 'text', placeholder = '', autocomplete = 'off' } = {}) {
+    const input = el('input', {
+      type, value: state[key] ?? '', placeholder, autocomplete,
+      class: INPUT, spellcheck: 'false',
+    });
     input.addEventListener('input', () => { state[key] = input.value; });
     return input;
   }
@@ -138,15 +160,15 @@ export function initOnboarding(config, { onComplete }) {
   function stepWelcome() {
     return card({
       title: 'Welcome to Comack',
-      subtitle: 'This wizard configures the appliance once. Every field can be changed later in Settings.',
+      subtitle: 'A quick once-through setup. You can change anything later in Settings.',
       children: [
-        el('div', { class: 'bg-indigo-950/40 border border-indigo-900 rounded-lg p-4 text-sm text-indigo-200 space-y-2' },
-          el('p', {}, 'Comack listens to room audio, transcribes it locally, and distills the conversation into surreal comics on an e-paper display.'),
-          el('p', { class: 'text-indigo-300' }, 'You will choose the AI backends (local or remote), pick a Whisper model size, and confirm capture consent.')),
-        el('div', { class: 'grid grid-cols-3 gap-2 text-center text-[11px] mono text-gray-400' },
-          ...[['\u{1F9E0}', 'LLM story mining'], ['\u{1F399}', 'Whisper STT'], ['\u{1F3A8}', 'Image backend']].map(([icon, text]) =>
-            el('div', { class: 'border border-gray-800 rounded-lg p-3 bg-gray-900/40' },
-              el('div', { class: 'text-xl mb-1' }, icon), text))),
+        el('div', { class: 'bg-indigo-950/40 border border-indigo-900 rounded-xl p-4 text-sm text-indigo-200 space-y-2 leading-relaxed' },
+          el('p', {}, 'Comack listens in your room, keeps only privacy-scrambled notes, and turns them into a comic on the e-paper display.'),
+          el('p', { class: 'text-indigo-300' }, 'Next: pick how stories and pictures get made, choose a speech model, and confirm you are okay with capture.')),
+        el('div', { class: 'grid grid-cols-3 gap-2 text-center text-xs text-gray-400' },
+          ...[['Story', 'Writes each issue'], ['Speech', 'Hears the room'], ['Art', 'Draws the panels']].map(([title, text]) =>
+            el('div', { class: 'border border-gray-800 rounded-xl p-3 bg-gray-900/40' },
+              el('div', { class: 'text-sm font-semibold text-indigo-200 mb-1' }, title), text))),
       ],
     });
   }
@@ -155,14 +177,22 @@ export function initOnboarding(config, { onComplete }) {
     const box = probeResultBox();
     return card({
       title: 'Story LLM',
-      subtitle: 'Any OpenAI-compatible chat endpoint mines stories and scripts panels. Leave empty to skip story mining (procedural comics only).',
+      subtitle: 'Any OpenAI-compatible chat endpoint (llama.cpp, vLLM, Ollama, hosted APIs\u2026). Leave empty to skip story mining.',
       children: [
-        label('LLM_URL', 'e.g. http://localhost:1234/v1 (LM Studio / Ollama / llama.cpp server)'),
-        boundInput('LLM_URL', { placeholder: 'http://localhost:1234/v1' }),
-        label('LLM_MODEL', 'model identifier the server expects'),
-        boundInput('LLM_MODEL', { placeholder: 'qwen2.5-7b-instruct' }),
+        label('API URL', 'LLM_URL — base URL ending in /v1 when the host serves that way'),
+        boundInput('LLM_URL', { placeholder: 'http://localhost:8080/v1' }),
+        label('Model', 'LLM_MODEL — whatever the endpoint expects (some local servers ignore it)'),
+        boundInput('LLM_MODEL', { placeholder: 'model-id' }),
+        label('API key', 'LLM_API_KEY — Bearer token when the endpoint authenticates; blank for local'),
+        boundInput('LLM_API_KEY', {
+          type: 'password',
+          placeholder: 'blank if the endpoint does not require auth',
+          autocomplete: 'new-password',
+        }),
         el('div', { class: 'flex items-start gap-2' },
-          probeBtn('llm', () => ({ url: state.LLM_URL, model: state.LLM_MODEL }), box), box),
+          probeBtn('llm', () => ({
+            url: state.LLM_URL, model: state.LLM_MODEL, api_key: state.LLM_API_KEY,
+          }), box), box),
       ],
     });
   }
@@ -218,51 +248,57 @@ export function initOnboarding(config, { onComplete }) {
   }
 
   function stepImages() {
-    const presetCards = el('div', { class: 'grid grid-cols-3 gap-2' },
-      ...PRESETS.map(({ key, name, blurb }) => el('button', {
-        class: `border rounded-lg p-3 text-left space-y-1 transition ${state.preset === key
-          ? 'border-indigo-500 bg-indigo-950/40'
-          : 'border-gray-800 bg-gray-900/40 hover:border-gray-600'}`,
-        onclick: () => pickPreset(key),
-      },
-        el('div', { class: 'text-sm font-bold text-white' }, name),
-        el('div', { class: 'text-[11px] text-gray-400 leading-snug' }, blurb))));
-
+    const box = probeResultBox();
     const children = [
-      presetCards,
-      el('div', { class: 'text-[11px] text-gray-500 mono' },
-        state.preset
-          ? `Preset "${state.preset}" will also set: ${Object.keys(state.presetValues).filter((k) => !IMAGE_KEYS.includes(k)).join(', ') || 'nothing else'}`
-          : 'Pick a backend preset to prefill the fields below.'),
+      label('API URL', 'FLUX_API_URL — OpenAI-compatible image endpoint (/v1/images/generations). Empty = render locally.'),
+      boundInput('FLUX_API_URL', { placeholder: 'http://localhost:8000/v1' }),
+      label('Model', 'FLUX_API_MODEL — whatever the endpoint expects (empty = provider default)'),
+      boundInput('FLUX_API_MODEL', { placeholder: 'model-id' }),
+      label('API key', 'FLUX_API_KEY — Bearer token when the endpoint authenticates; blank for local'),
+      boundInput('FLUX_API_KEY', {
+        type: 'password',
+        placeholder: 'blank if the endpoint does not require auth',
+        autocomplete: 'new-password',
+      }),
+      el('div', { class: 'flex items-start gap-2' },
+        probeBtn('image', () => ({
+          url: state.FLUX_API_URL,
+          api_key: state.FLUX_API_KEY,
+        }), box), box),
+      el('p', { class: 'text-[11px] text-gray-500 pt-2' },
+        'Optional: prefill local rendering knobs (only used when API URL is empty).'),
+      el('div', { class: 'grid grid-cols-2 gap-2' },
+        ...PRESETS.map(({ key, name, blurb }) => el('button', {
+          type: 'button',
+          class: `border rounded-lg p-3 text-left space-y-1 transition ${state.preset === key
+            ? 'border-indigo-500 bg-indigo-950/40'
+            : 'border-gray-800 bg-gray-900/40 hover:border-gray-600'}`,
+          onclick: () => {
+            state.FLUX_API_URL = '';
+            pickPreset(key);
+          },
+        },
+          el('div', { class: 'text-sm font-bold text-white' }, name),
+          el('div', { class: 'text-[11px] text-gray-400 leading-snug' }, blurb)))),
     ];
 
-    if (state.preset === 'external-api') {
-      children.push(
-        label('FLUX_API_URL', 'OpenAI-compatible image API — panels POST {base}/v1/images/generations and read base64 (or a URL) back'),
-        boundInput('FLUX_API_URL', { placeholder: 'http://gpu-box:8000' }),
-        el('div', { class: 'grid grid-cols-2 gap-3' },
-          el('div', {}, label('FLUX_API_MODEL', 'model name the endpoint expects (empty = provider default)'),
-            boundInput('FLUX_API_MODEL', { placeholder: 'flux-schnell' })),
-          el('div', {}, label('FLUX_API_KEY', 'sent as a Bearer token on renders and the probe; stored masked'),
-            boundInput('FLUX_API_KEY', { type: 'password', placeholder: 'optional' }))));
-    }
-    if (state.preset && state.preset !== 'external-api') {
-      children.push(
-        el('div', { class: 'grid grid-cols-2 gap-3' },
-          el('div', {}, label('FLUX_MODEL_ID'), boundInput('FLUX_MODEL_ID', { placeholder: 'FLUX.1-schnell-Q4_K_S.gguf' })),
-          el('div', {}, label('FLUX_DEVICE'), boundInput('FLUX_DEVICE', { placeholder: 'cuda' }))),
-        el('div', { class: 'grid grid-cols-2 gap-3' },
-          el('div', {}, label('FLUX_INFERENCE_STEPS'), boundInput('FLUX_INFERENCE_STEPS', { type: 'number' })),
-          el('div', {}, label('FLUX_MIN_FREE_VRAM_GB'), boundInput('FLUX_MIN_FREE_VRAM_GB', { type: 'number' }))));
-    }
     if (state.preset) {
-      const box = probeResultBox();
-      children.push(el('div', { class: 'flex items-start gap-2' },
-        probeBtn('image', () => ({ url: state.FLUX_API_URL }), box), box));
+      children.push(
+        el('div', { class: 'grid grid-cols-2 gap-3' },
+          el('div', {}, label('Local model', 'FLUX_MODEL_ID'),
+            boundInput('FLUX_MODEL_ID', { placeholder: 'stabilityai/sd-turbo' })),
+          el('div', {}, label('Device', 'FLUX_DEVICE'),
+            boundInput('FLUX_DEVICE', { placeholder: 'cuda' }))),
+        el('div', { class: 'grid grid-cols-2 gap-3' },
+          el('div', {}, label('Steps', 'FLUX_INFERENCE_STEPS'),
+            boundInput('FLUX_INFERENCE_STEPS', { type: 'number' })),
+          el('div', {}, label('Min free VRAM (GB)', 'FLUX_MIN_FREE_VRAM_GB'),
+            boundInput('FLUX_MIN_FREE_VRAM_GB', { type: 'number' }))));
     }
+
     return card({
       title: 'Image generation',
-      subtitle: 'How panel art is rendered. This is the heaviest part of the pipeline — pick what your hardware supports. You can fine-tune every value later in Settings.',
+      subtitle: 'Any OpenAI-compatible image endpoint. Leave the URL empty to render on this machine instead.',
       children,
     });
   }
@@ -297,8 +333,14 @@ export function initOnboarding(config, { onComplete }) {
   }
 
   function nonEmptyOverridesRow() {
-    return Object.entries({ ...state.presetValues, ...nonEmptyImageOverrides(state) })
+    return Object.entries({ ...scrubPresetValues(state.presetValues), ...nonEmptyImageOverrides(state) })
       .map(([k, v]) => `${k}=${v}`).join(', ');
+  }
+
+  function keyStatus(value) {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) return '(empty)';
+    return isMasked(trimmed) ? '(saved)' : '(set)';
   }
 
   function summary() {
@@ -306,11 +348,15 @@ export function initOnboarding(config, { onComplete }) {
       el('span', { class: 'text-xs mono text-indigo-300' }, k),
       el('span', { class: 'text-xs mono text-gray-300 truncate max-w-[60%] text-right' }, String(v ?? '')));
     const presetRow = state.preset
-      ? [row(`preset: ${state.preset}`, nonEmptyOverridesRow())]
+      ? [row(`preset: ${state.preset}`, nonEmptyOverridesRow() || '(image fields only)')]
       : [];
     return [
-      row('LLM_URL', state.LLM_URL.trim() || '(empty — mining off)'),
-      row('LLM_MODEL', state.LLM_MODEL.trim() || '(empty)'),
+      row('Story API URL', state.LLM_URL.trim() || '(empty — mining off)'),
+      row('Story model', state.LLM_MODEL.trim() || '(empty)'),
+      row('Story API key', keyStatus(state.LLM_API_KEY)),
+      row('Image API URL', state.FLUX_API_URL.trim() || '(empty — local render)'),
+      row('Image model', state.FLUX_API_MODEL.trim() || '(empty)'),
+      row('Image API key', keyStatus(state.FLUX_API_KEY)),
       row('WHISPER_MODEL_SIZE', state.WHISPER_MODEL_SIZE),
       ...presetRow,
       row('capture consent', state.consent ? 'confirmed' : 'NOT confirmed'),

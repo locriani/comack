@@ -11,7 +11,7 @@ use super::identity::{DeviceIdentity, IdentityPath};
 use super::json::parse_issue_number;
 use super::net::TcpConnector;
 use crate::application::ports::{ComicSource, ComicTrigger, PressReporter};
-use crate::domain::{Button, Frame, Issue, FRAME_BYTES};
+use crate::domain::{Button, ColorFrame, Frame, Issue, COLOR_FRAME_BYTES, FRAME_BYTES};
 
 /// Where the device reports button presses; tokenless like the comic read
 /// routes, because the device carries no token (`server/auth.py`).
@@ -24,7 +24,8 @@ pub enum ComicApiError {
     Http(HttpError),
     /// The server answered with an unexpected status.
     Status(u16),
-    /// The frame was shorter than [`FRAME_BYTES`].
+    /// The frame was shorter than [`FRAME_BYTES`] (or [`COLOR_FRAME_BYTES`]
+    /// for a colour image).
     Incomplete {
         /// Bytes actually received.
         received: usize,
@@ -71,6 +72,64 @@ impl<'a, C: TcpConnector> HttpComicService<'a, C> {
             base: "/api/comics/current",
             identity: &self.identity,
         }
+    }
+
+    /// Downloads the colour image of `issue` for a Spectra 6 panel. Same
+    /// identity-free route family as [`ComicSource::fetch`].
+    ///
+    /// Pulled in four 48 KB parts (`/color.bin/0`…`/3`): MicroLink/WG often
+    /// truncates a single 192 KB GET. Each part is retried — the server usually
+    /// finishes the response; the device TCP path drops mid-body.
+    ///
+    /// # Errors
+    /// Transport failures, a non-200 status, or a short body after retries.
+    pub fn fetch_color(
+        &mut self,
+        issue: Issue,
+        image: &mut ColorFrame,
+    ) -> Result<(), ComicApiError> {
+        const PARTS: usize = 4;
+        const PART_BYTES: usize = COLOR_FRAME_BYTES / PARTS;
+        const ATTEMPTS: usize = 5;
+        let mut received = 0;
+        for part in 0..PARTS {
+            let dest = &mut image[part * PART_BYTES..(part + 1) * PART_BYTES];
+            let path = format_args!("/api/comics/{}/color.bin/{part}", issue.get());
+            let mut last = ComicApiError::Incomplete { received: 0 };
+            let mut ok = false;
+            for attempt in 0..ATTEMPTS {
+                match self.http.request(self.server, Method::Get, path, dest) {
+                    Ok(resp) if resp.status == 200 && resp.body_len == PART_BYTES => {
+                        received += PART_BYTES;
+                        ok = true;
+                        break;
+                    }
+                    Ok(resp) if resp.status != 200 => {
+                        last = ComicApiError::Status(resp.status);
+                        if resp.status == 404 {
+                            return Err(last);
+                        }
+                    }
+                    Ok(resp) => {
+                        last = ComicApiError::Incomplete {
+                            received: received + resp.body_len,
+                        };
+                    }
+                    Err(e) => last = ComicApiError::Http(e),
+                }
+                if attempt + 1 < ATTEMPTS {
+                    warn!(
+                        "Colour part {part}/{} for comic {} incomplete ({last:?}); retrying",
+                        PARTS - 1,
+                        issue.get()
+                    );
+                }
+            }
+            if !ok {
+                return Err(last);
+            }
+        }
+        Ok(())
     }
 
     /// The trigger, carrying this device's identity so the refresh is
@@ -243,6 +302,52 @@ mod tests {
             .unwrap();
         assert_eq!(frame.as_slice(), pixels.as_slice());
         assert_eq!(request_line(&c), b"GET /api/comics/7/bin HTTP/1.1");
+    }
+
+    #[test]
+    fn fetch_color_downloads_a_full_colour_image() {
+        let pixels: Vec<u8> = (0..COLOR_FRAME_BYTES).map(|i| (i % 249) as u8).collect();
+        let parts: Vec<Vec<u8>> = (0..4)
+            .map(|part| {
+                let mut r =
+                    std::format!("HTTP/1.1 200 OK\r\ncontent-type: x\r\n\r\n").into_bytes();
+                let start = part * (COLOR_FRAME_BYTES / 4);
+                r.extend_from_slice(&pixels[start..start + COLOR_FRAME_BYTES / 4]);
+                r
+            })
+            .collect();
+        let c = ScriptedConnector::replying(&parts.iter().map(|p| p.as_slice()).collect::<Vec<_>>());
+        let mut image: Box<ColorFrame> = std::vec![0u8; COLOR_FRAME_BYTES]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        service(c.clone())
+            .fetch_color(Issue::new(7).unwrap(), &mut image)
+            .unwrap();
+        assert_eq!(image.as_slice(), pixels.as_slice());
+        let sent = c.sent();
+        // Four GETs: /color.bin/0 … /color.bin/3
+        assert!(sent.windows(b"/color.bin/0".len()).any(|w| w == b"/color.bin/0"));
+        assert!(sent.windows(b"/color.bin/3".len()).any(|w| w == b"/color.bin/3"));
+    }
+
+    #[test]
+    fn fetch_color_rejects_short_images_and_missing_issues() {
+        let mut image: Box<ColorFrame> = std::vec![0u8; COLOR_FRAME_BYTES]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        let issue = Issue::new(3).unwrap();
+        // One short reply: the client keeps reading until the script is empty
+        // (stands in for Connection: close), then retries exhaust the wire.
+        assert!(matches!(
+            service(reply("200 OK", &[0xAA; 100])).fetch_color(issue, &mut image),
+            Err(ComicApiError::Incomplete { .. } | ComicApiError::Http(_))
+        ));
+        assert_eq!(
+            service(reply("404 Not Found", b"")).fetch_color(issue, &mut image),
+            Err(ComicApiError::Status(404))
+        );
     }
 
     #[test]

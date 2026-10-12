@@ -20,7 +20,7 @@ fn main() -> ExitCode {
         .unwrap_or_else(|| "text-sample.pbm".into());
     let mut frame: Frame = [0xFF; FRAME_BYTES];
     draw_text(&mut frame, 40, 200, "Setup: join WiFi comack-setup");
-    draw_text(&mut frame, 40, 220, "then open http://192.168.4.1");
+    draw_text(&mut frame, 40, 220, "then open http://192.168.71.1");
     draw_text(&mut frame, 40, 240, "0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     draw_text(&mut frame, 40, 260, "abcdefghijklmnopqrstuvwxyz .,:/=-");
     fs::write(&path, PbmDisplay::encode(&frame)).expect("write PBM");

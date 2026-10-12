@@ -27,6 +27,9 @@ impl Latch {
         *self.set.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Block until set. Prefer a polling loop when the e-paper / setup
+    /// chord must stay responsive (see `wait_for_wifi` in main).
+    #[allow(dead_code)]
     pub fn wait(&self) {
         let guard = self.set.lock().unwrap_or_else(PoisonError::into_inner);
         drop(

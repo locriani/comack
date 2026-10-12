@@ -8,22 +8,66 @@ import { apiJson, ApiError, isMasked } from '../api.js';
 import { el } from '../dom.js';
 
 // Presentation-only grouping, mirroring the sections in server/config.py.
+// Story LLM sits near the top so URL / model / API key are editable without
+// scrolling past server plumbing.
 const GROUPS = [
-  { id: 'server', title: 'Server', icon: '\u{1F310}', fields: ['HOST', 'PORT'] },
   { id: 'access', title: 'Dashboard & Access', icon: '\u{1F510}', fields: ['ONBOARDED', 'WEB_TOKEN'] },
-  { id: 'llm', title: 'Story LLM (OpenAI-compatible)', icon: '\u{1F9E0}', fields: ['LLM_URL', 'LLM_MODEL', 'MINER_LLM_URL'], test: 'llm' },
+  {
+    id: 'llm',
+    title: 'Story LLM',
+    icon: '\u{1F9E0}',
+    blurb: 'Any OpenAI-compatible chat endpoint (llama.cpp, vLLM, Ollama, hosted APIs\u2026). Edit here; Save applies immediately.',
+    fields: ['LLM_URL', 'LLM_MODEL', 'LLM_API_KEY', 'MINER_LLM_URL', 'MINER_LLM_MODEL'],
+    test: 'llm',
+  },
   { id: 'hf', title: 'Hugging Face', icon: '\u{1F917}', fields: ['HF_TOKEN'] },
   { id: 'whisper', title: 'Speech-to-text (Whisper)', icon: '\u{1F399}', fields: [
     'WHISPER_MODEL_SIZE', 'WHISPER_DEVICE', 'WHISPER_MIN_AVG_LOGPROB', 'WHISPER_MAX_COMPRESSION', 'WHISPER_MAX_NO_SPEECH'], test: 'whisper' },
+  {
+    id: 'image',
+    title: 'Image generation',
+    icon: '\u{1F3A8}',
+    blurb: 'Any OpenAI-compatible image endpoint (/v1/images/generations). Set API URL for remote-only renders; leave it empty to use the local knobs below.',
+    fields: [
+      'FLUX_API_URL', 'FLUX_API_MODEL', 'FLUX_API_KEY',
+      'FLUX_MODEL_ID', 'FLUX_DEVICE', 'FLUX_INFERENCE_STEPS', 'FLUX_GUIDANCE_SCALE',
+      'FLUX_GGUF_URL', 'FLUX_MIN_FREE_VRAM_GB', 'FLUX_VRAM_WAIT_SECONDS'],
+    test: 'image',
+  },
   { id: 'cadence', title: 'Comic Cadence & Triggers', icon: '\u{23F1}', fields: [
     'SNEAKY_SILENCE_SECONDS', 'SECRET_PHRASES', 'COMIC_MIN_MINUTES', 'COMIC_MAX_MINUTES',
     'DEFAULT_LINES_WANTED', 'PROCESS_INTERVAL_MINUTES'] },
   { id: 'privacy', title: 'Privacy Scramble', icon: '\u{1F7E4}', fields: ['POS_SCRAMBLE_RATE'] },
   { id: 'arcs', title: 'Story Arcs', icon: '\u{1F4DA}', fields: ['ARC_MIN_PANELS', 'ARC_MAX_PANELS'] },
-  { id: 'image', title: 'Image Generation', icon: '\u{1F3A8}', fields: [
-    'FLUX_MODEL_ID', 'FLUX_DEVICE', 'FLUX_INFERENCE_STEPS', 'FLUX_GUIDANCE_SCALE',
-    'FLUX_GGUF_URL', 'FLUX_MIN_FREE_VRAM_GB', 'FLUX_VRAM_WAIT_SECONDS', 'FLUX_API_URL'], test: 'image' },
+  { id: 'server', title: 'Server', icon: '\u{1F310}', fields: ['HOST', 'PORT'] },
 ];
+
+const FIELD_LABELS = {
+  LLM_URL: 'API URL',
+  LLM_MODEL: 'Model',
+  LLM_API_KEY: 'API key',
+  MINER_LLM_URL: 'Miner URL (optional)',
+  MINER_LLM_MODEL: 'Miner model (optional)',
+  HF_TOKEN: 'Hugging Face token',
+  WEB_TOKEN: 'Dashboard token',
+  FLUX_API_URL: 'API URL',
+  FLUX_API_MODEL: 'Model',
+  FLUX_API_KEY: 'API key',
+  FLUX_MODEL_ID: 'Local model id',
+  FLUX_DEVICE: 'Device',
+};
+
+const FIELD_PLACEHOLDERS = {
+  LLM_URL: 'http://localhost:8080/v1',
+  LLM_MODEL: 'model-id',
+  LLM_API_KEY: 'blank if the endpoint does not require auth',
+  MINER_LLM_URL: 'empty = same as API URL',
+  MINER_LLM_MODEL: 'empty = same as Model; e.g. openai/gpt-oss-20b:free',
+  HF_TOKEN: 'hf_…',
+  FLUX_API_URL: 'http://localhost:8000/v1',
+  FLUX_API_MODEL: 'model-id',
+  FLUX_API_KEY: 'blank if the endpoint does not require auth',
+};
 
 const INPUT_CLASS = 'bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white w-full focus:outline-none focus:border-indigo-500';
 
@@ -89,6 +133,8 @@ export function initSettings(root, initialConfig) {
       : (field.value_type === 'int' || field.value_type === 'float') ? 'number' : 'text';
     return el('input', {
       type, value: value ?? '',
+      placeholder: FIELD_PLACEHOLDERS[name] ?? '',
+      autocomplete: field.secret ? 'off' : null,
       step: field.value_type === 'float' ? 'any' : field.value_type === 'int' ? '1' : null,
       class: INPUT_CLASS, spellcheck: 'false',
     });
@@ -104,10 +150,13 @@ export function initSettings(root, initialConfig) {
 
     const chip = el('span', { class: 'hidden text-[10px] mono px-2 py-0.5 rounded-full' });
     statusChips.set(name, chip);
+    const label = FIELD_LABELS[name] ?? name;
 
     return el('div', { class: 'border border-gray-800 rounded-lg p-3 space-y-1.5 bg-gray-900/40' },
       el('div', { class: 'flex items-center justify-between gap-2' },
-        el('label', { class: 'text-xs mono font-bold text-indigo-300' }, name),
+        el('label', { class: 'text-xs font-bold text-indigo-300' },
+          label,
+          el('span', { class: 'ml-2 mono font-normal text-gray-600' }, name)),
         el('div', { class: 'flex items-center gap-2' },
           field.runtime_adjustable ? null
             : el('span', { class: 'text-[10px] mono px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800', title: 'Takes effect when the server restarts' }, 'restart'),
@@ -116,15 +165,35 @@ export function initSettings(root, initialConfig) {
       el('p', { class: 'text-[11px] text-gray-500 leading-snug' }, field.description ?? ''));
   }
 
+  function applyPreset(preset) {
+    for (const [name, value] of Object.entries(preset.values ?? {})) {
+      const input = inputs.get(name);
+      if (!input || !fields[name]) continue;
+      if (fields[name].value_type === 'bool') input.checked = Boolean(value);
+      else input.value = value ?? '';
+      dirty.add(name);
+    }
+    if (preset.focus) inputs.get(preset.focus)?.focus();
+  }
+
   function render() {
     groupsBox.replaceChildren(...GROUPS.map((group) => {
       const present = group.fields.filter((name) => fields[name]);
       const extra = Object.keys(fields).filter((name) => !GROUPS.some((g) => g.fields.includes(name)));
       const all = [...present, ...(group.id === 'other' ? extra : [])];
-      return el('div', { class: 'bg-[#161922] border border-gray-800 rounded-xl p-4 space-y-3', 'data-group': group.id },
-        el('div', { class: 'flex items-center justify-between' },
+      return el('div', { class: 'card p-4 space-y-3', 'data-group': group.id },
+        el('div', { class: 'flex items-center justify-between gap-2 flex-wrap' },
           el('h3', { class: 'text-sm font-bold text-white' }, `${group.icon} ${group.title}`),
-          group.test ? testButton(group) : null),
+          el('div', { class: 'flex items-center gap-2 flex-wrap' },
+            ...(group.presets ?? []).map((preset) => el('button', {
+              type: 'button',
+              class: 'text-xs mono px-3 py-1.5 rounded-md border border-indigo-700 bg-indigo-950/40 text-indigo-200 hover:border-indigo-400',
+              onclick: () => applyPreset(preset),
+            }, preset.label)),
+            group.test ? testButton(group) : null)),
+        group.blurb
+          ? el('p', { class: 'text-[11px] text-gray-400 leading-snug' }, group.blurb)
+          : null,
         el('div', { class: 'grid grid-cols-1 xl:grid-cols-2 gap-3' }, all.map(fieldRow)),
         group.test ? el('div', { 'data-test-result': '', class: 'hidden' }) : null);
     }));
@@ -132,6 +201,7 @@ export function initSettings(root, initialConfig) {
 
   function testButton(group) {
     return el('button', {
+      type: 'button',
       class: 'text-xs mono px-3 py-1.5 rounded-md border border-gray-700 hover:border-indigo-500 hover:text-indigo-300 text-gray-400',
       onclick: (e) => runTest(group, e.target),
     }, 'Test connection');
@@ -140,9 +210,17 @@ export function initSettings(root, initialConfig) {
   // ── tests ─────────────────────────────────────────────────────────────
   function testOverrides(group) {
     const typed = (name) => (inputs.get(name) ? readValue(inputs.get(name), fields[name]) : values[name]);
-    if (group.test === 'llm') return { url: typed('LLM_URL') ?? '', model: typed('LLM_MODEL') ?? '' };
+    if (group.test === 'llm') {
+      return {
+        url: typed('LLM_URL') ?? '',
+        model: typed('LLM_MODEL') ?? '',
+        api_key: typed('LLM_API_KEY') ?? '',
+      };
+    }
     if (group.test === 'whisper') return { model_size: typed('WHISPER_MODEL_SIZE') ?? '' };
-    if (group.test === 'image') return { url: typed('FLUX_API_URL') ?? '' };
+    if (group.test === 'image') {
+      return { url: typed('FLUX_API_URL') ?? '', api_key: typed('FLUX_API_KEY') ?? '' };
+    }
     return {};
   }
 

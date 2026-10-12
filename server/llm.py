@@ -40,13 +40,39 @@ def api_url(base_url: str, path: str) -> str:
     return f"{base}/{path}" if base.endswith("/v1") else f"{base}/v1/{path}"
 
 
-async def complete_json(system_prompt: str, user_prompt: str, base_url: str = "") -> Optional[Dict[str, Any]]:
+def auth_headers(api_key: str | None = None, *, base_url: str = "") -> Dict[str, str]:
+    """Bearer header for OpenAI-compatible providers (OpenRouter, OpenAI, …).
+    `None` uses `LLM_API_KEY`; an explicit empty string means no header
+    (local llama.cpp / Ollama, or a probe that cleared the key).
+    OpenRouter also gets the optional attribution headers it documents."""
+    headers: Dict[str, str] = {}
+    key = (settings.LLM_API_KEY if api_key is None else api_key).strip()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    base = (base_url or settings.LLM_URL).lower()
+    if "openrouter.ai" in base:
+        headers.setdefault("HTTP-Referer", "https://github.com/locriani/comack")
+        headers.setdefault("X-OpenRouter-Title", "Comack")
+    return headers
+
+
+async def miner_complete_json(system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
+    """Privacy miner passes: MINER_LLM_* with empty fields falling back via complete_json."""
+    return await complete_json(
+        system_prompt, user_prompt, settings.MINER_LLM_URL, model=settings.MINER_LLM_MODEL)
+
+
+async def complete_json(system_prompt: str, user_prompt: str, base_url: str = "",
+                        model: str = "") -> Optional[Dict[str, Any]]:
     """One chat completion asking for JSON (default: the main model). None when the call fails
-    or the reply isn't JSON; callers treat that as "no output", never as a reason to fall back."""
+    or the reply isn't JSON; callers treat that as "no output", never as a reason to fall back.
+
+    `model` overrides LLM_MODEL when set (the miner uses MINER_LLM_MODEL this way).
+    """
     base = (base_url or settings.LLM_URL).rstrip('/')
     url = api_url(base, "chat/completions")
     payload = {
-        "model": settings.LLM_MODEL or "default",
+        "model": (model or settings.LLM_MODEL) or "default",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -63,7 +89,7 @@ async def complete_json(system_prompt: str, user_prompt: str, base_url: str = ""
         # Reasoning model with thinking on: generation can take minutes.
         async with httpx.AsyncClient(timeout=600.0) as client:
             logger.info(f"Sending prompt to the LLM at {url}")
-            resp = await client.post(url, json=payload)
+            resp = await client.post(url, json=payload, headers=auth_headers(base_url=base))
         if resp.status_code != 200:
             entry["output"] = f"HTTP {resp.status_code}: {resp.text}"
             logger.warning(f"LLM returned status {resp.status_code}: {resp.text[:200]}")

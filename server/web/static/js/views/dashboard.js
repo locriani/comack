@@ -12,21 +12,22 @@ const $ = (id) => document.getElementById(id);
 export function setConnectionBadge(state) {
   const badge = $('connectionStatus');
   if (state === 'connected') {
-    badge.className = 'flex items-center space-x-2 text-xs mono px-3 py-1 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800';
-    badge.replaceChildren(el('span', { class: 'w-2 h-2 rounded-full bg-emerald-400' }), el('span', {}, 'CONNECTED'));
+    badge.className = 'flex items-center gap-2 text-xs mono px-2.5 py-1 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-900/80';
+    badge.replaceChildren(el('span', { class: 'w-2 h-2 rounded-full bg-emerald-400' }), el('span', {}, 'Live'));
   } else {
-    badge.className = 'flex items-center space-x-2 text-xs mono px-3 py-1 rounded-full bg-red-950/80 text-red-400 border border-red-800';
-    badge.replaceChildren(el('span', { class: 'w-2 h-2 rounded-full bg-red-500 animate-pulse' }), el('span', {}, state.toUpperCase()));
+    const label = state === 'connecting' ? 'Connecting…' : state.charAt(0).toUpperCase() + state.slice(1);
+    badge.className = 'flex items-center gap-2 text-xs mono px-2.5 py-1 rounded-full bg-red-950/70 text-red-300 border border-red-900/80';
+    badge.replaceChildren(el('span', { class: 'w-2 h-2 rounded-full bg-red-400 animate-pulse' }), el('span', {}, label));
   }
 }
 
 // Button-press pulse: a device press surfaces as a transient chip beside the
 // VAD indicator — visible ~3 s, then fades; a fresh press relabels and
 // restarts the dwell. A pulse like VOICE DETECTED, not a log.
-const PRESS_LABELS = { forward: 'FORWARD', back: 'BACK', trigger: 'GREEN' };
+const PRESS_LABELS = { forward: 'Forward', back: 'Back', trigger: 'Green' };
 const PRESS_CHIP_DWELL_MS = 3000;
 const PRESS_CHIP_FADE_MS = 500;
-const pressChipBase = 'items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 transition-opacity duration-500';
+const pressChipBase = 'items-center gap-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 transition-opacity duration-500';
 let pressChipTimer = null;
 
 function showButtonPress(button) {
@@ -37,7 +38,7 @@ function showButtonPress(button) {
   chip.className = `flex ${pressChipBase}`;
   chip.replaceChildren(
     el('span', { class: 'w-2 h-2 rounded-full bg-indigo-400' }),
-    el('span', {}, `${label} PRESSED`)
+    el('span', {}, label)
   );
   clearTimeout(pressChipTimer);
   pressChipTimer = setTimeout(() => {
@@ -51,11 +52,11 @@ function updateSneakyStatus(status) {
 
   const vad = $('vadIndicator');
   if (status.is_speaking) {
-    vad.className = 'flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800';
-    vad.replaceChildren(el('span', { class: 'w-2 h-2 rounded-full bg-red-500 animate-ping' }), el('span', {}, 'VOICE DETECTED'));
+    vad.className = 'flex items-center gap-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-red-950/80 text-red-300 border border-red-900/80';
+    vad.replaceChildren(el('span', { class: 'w-2 h-2 rounded-full bg-red-400 animate-ping' }), el('span', {}, 'Hearing talk'));
   } else {
-    vad.className = 'flex items-center space-x-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800';
-    vad.replaceChildren(el('span', { class: 'w-2 h-2 rounded-full bg-emerald-400' }), el('span', {}, 'ROOM QUIET'));
+    vad.className = 'flex items-center gap-1.5 text-xs mono px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-900/80';
+    vad.replaceChildren(el('span', { class: 'w-2 h-2 rounded-full bg-emerald-400' }), el('span', {}, 'Quiet'));
   }
 
   $('sneakyCard').classList.toggle('hidden', !status.required_silence_seconds);
@@ -68,12 +69,12 @@ function updateSneakyStatus(status) {
   if (status.has_stealth_comic) {
     alert.classList.remove('hidden');
     $('pendingIssue').innerText = `#${status.pending_series_issue ?? status.pending_issue_number}`;
-    badge.className = 'text-xs mono font-bold px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800';
-    badge.innerText = 'STEALTH HOLD';
+    badge.className = 'text-xs mono font-semibold px-2 py-0.5 rounded-md bg-amber-950 text-amber-300 border border-amber-800';
+    badge.innerText = 'Holding';
   } else {
     alert.classList.add('hidden');
-    badge.className = 'text-xs mono font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400';
-    badge.innerText = 'IDLE';
+    badge.className = 'text-xs mono font-semibold px-2 py-0.5 rounded-md bg-[var(--ink-3)] text-[var(--fog)]';
+    badge.innerText = 'Waiting';
   }
 }
 
@@ -85,25 +86,25 @@ function updateSneakyStatus(status) {
 let previewEpoch = 0;
 
 const deviceChip = (device) => el('span', {
-  class: 'flex items-center space-x-1.5 text-xs mono px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700',
+  class: 'flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full bg-[var(--ink-3)] text-[var(--mist)] border border-[var(--line)]',
   title: `device: ${device.id}`,
 }, el('span', { class: 'w-1.5 h-1.5 rounded-full bg-indigo-400' }), el('span', {}, device.name));
 
 function arcCard(device) {
   const arc = device.active_arc;
   const progress = arc ? Math.min(100, 100 * arc.panels_used / arc.target_panels) : 0;
-  return el('div', { class: 'bg-[#161922] border border-gray-800 rounded-xl p-4 flex flex-col space-y-2', 'data-device-arc': device.id },
+  return el('div', { class: 'card p-4 flex flex-col gap-2', 'data-device-arc': device.id },
     el('div', { class: 'flex items-center justify-between gap-2' },
       deviceChip(device),
-      el('span', { class: 'text-xs mono px-2 py-0.5 rounded bg-gray-800 text-gray-300 truncate' }, arc ? arc.genre : '--')),
-    el('h2', { class: 'text-lg font-bold text-white truncate' }, arc ? arc.title : 'Generating next arc'),
-    el('p', { class: 'text-sm text-gray-400 italic line-clamp-2' },
-      arc ? `"${arc.premise}"` : 'A new story starts with the next comic.'),
-    el('div', { class: 'pt-2' },
-      el('div', { class: 'flex justify-between text-xs text-gray-400 mono mb-1' },
-        el('span', {}, 'Arc Lifespan Progress'),
-        el('span', {}, arc ? `${arc.panels_used} / ${arc.target_panels} panels` : '--')),
-      el('div', { class: 'w-full bg-gray-800 rounded-full h-1.5 overflow-hidden' },
+      el('span', { class: 'text-xs px-2 py-0.5 rounded-md bg-[var(--ink-3)] text-[var(--fog)] truncate' }, arc ? arc.genre : '—')),
+    el('h2', { class: 'text-lg font-bold truncate' }, arc ? arc.title : 'Starting the next series…'),
+    el('p', { class: 'text-sm text-[var(--fog)] italic line-clamp-2' },
+      arc ? `"${arc.premise}"` : 'A brand-new arc begins with the next issue.'),
+    el('div', { class: 'pt-1' },
+      el('div', { class: 'flex justify-between text-xs text-[var(--fog)] mb-1' },
+        el('span', {}, 'Through this arc'),
+        el('span', { class: 'mono' }, arc ? `${arc.panels_used} / ${arc.target_panels} panels` : '—')),
+      el('div', { class: 'w-full bg-[var(--ink)] rounded-full h-1.5 overflow-hidden' },
         el('div', { class: 'bg-indigo-500 h-1.5 rounded-full transition-all duration-500', style: `width: ${progress}%` }))));
 }
 
@@ -116,27 +117,27 @@ function deviceCard(device) {
         alt: `Latest issue on ${device.name}`,
         class: 'w-full h-auto aspect-[800/480] object-cover bg-white rounded-sm',
       })
-    : el('div', { class: 'w-full aspect-[800/480] bg-[#e2e4e9] rounded-sm flex items-center justify-center' },
-        el('span', { class: 'text-xs mono text-gray-500' }, 'No comic displayed yet'));
-  return el('div', { class: 'bg-[#161922] border border-gray-800 rounded-xl p-4 flex flex-col space-y-2', 'data-device-card': device.id },
+    : el('div', { class: 'w-full aspect-[800/480] bg-[var(--paper)] rounded-md flex items-center justify-center' },
+        el('span', { class: 'text-xs text-[var(--fog)]' }, 'No comic yet'));
+  return el('div', { class: 'card p-4 flex flex-col gap-2', 'data-device-card': device.id },
     el('div', { class: 'flex items-center justify-between gap-2' },
-      el('span', { class: 'text-sm font-bold text-white truncate' }, device.name),
+      el('span', { class: 'text-sm font-bold truncate' }, device.name),
       el('span', {
-        class: `text-[10px] mono px-2 py-0.5 rounded ${live
-          ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-          : 'bg-gray-800 text-gray-400'}`,
-      }, live ? 'LIVE' : 'IDLE')),
-    el('div', { class: 'bg-[#e2e4e9] p-1 rounded' }, preview),
-    el('div', { class: 'flex items-center justify-between gap-2 text-[10px] mono text-gray-500' },
-      el('span', {}, comic ? `#${comic.series_issue ?? comic.issue_number} \u00b7 ${comic.title}` : 'waiting for its first comic'),
-      el('a', { href: comic ? `/reader#${comic.issue_number}` : '/reader', class: 'text-indigo-400 hover:text-indigo-300' }, 'reader \u2192')));
+        class: `text-[10px] mono px-2 py-0.5 rounded-md ${live
+          ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-900/80'
+          : 'bg-[var(--ink-3)] text-[var(--fog)]'}`,
+      }, live ? 'Online' : 'Away')),
+    el('div', { class: 'bg-[var(--paper)] p-1 rounded-lg' }, preview),
+    el('div', { class: 'flex items-center justify-between gap-2 text-xs text-[var(--fog)]' },
+      el('span', {}, comic ? `#${comic.series_issue ?? comic.issue_number} · ${comic.title}` : 'Waiting for its first issue'),
+      el('a', { href: comic ? `/reader#${comic.issue_number}` : '/reader', class: 'text-indigo-300 hover:text-indigo-200' }, 'Open →')));
 }
 
 async function loadDevices() {
   try {
     const body = await apiJson('/api/devices');
     const devices = body.devices ?? [];
-    $('deviceCount').textContent = `${devices.length} registered`;
+    $('deviceCount').textContent = devices.length === 1 ? '1 room' : `${devices.length} rooms`;
     $('arcCards').replaceChildren(...devices.map(arcCard));
     $('deviceCards').replaceChildren(...devices.map(deviceCard));
   } catch (e) {
@@ -164,7 +165,7 @@ function showOriginals(issue, panelCount) {
 }
 
 function setActiveIssue(issue, seriesIssue, title) {
-  $('currentIssueTag').innerText = `Active Issue: #${seriesIssue ?? issue} — ${title}`;
+  $('currentIssueTag').innerText = `#${seriesIssue ?? issue} — ${title}`;
   $('comicImage').src = `/api/comics/current.png?t=${Date.now()}`;
 }
 
@@ -172,14 +173,14 @@ function updateComic(comic) {
   showOriginals(comic.issue_number, comic.panel_count);
   setActiveIssue(comic.issue_number, comic.series_issue, comic.title);
   if (comic.displayed_at) {
-    $('lastRefreshedAt').innerText = `Last Screen Update: ${fmtTime(comic.displayed_at)}`;
+    $('lastRefreshedAt').innerText = `Updated ${fmtTime(comic.displayed_at)}`;
   }
 }
 
 function refreshComicImage(data) {
   showOriginals(data.issue_number, data.panel_count);
   setActiveIssue(data.issue_number, data.series_issue, data.title);
-  $('lastRefreshedAt').innerText = `Last Screen Update: ${new Date().toLocaleTimeString()} (Silent for ${data.silence_seconds}s)`;
+  $('lastRefreshedAt').innerText = `Updated ${new Date().toLocaleTimeString()} after ${data.silence_seconds}s quiet`;
   window.dispatchEvent(new CustomEvent('comics-changed'));
 }
 
@@ -187,12 +188,15 @@ function addTranscriptItem(item) {
   const list = $('transcriptList');
   if (list.dataset.empty === 'true') list.replaceChildren();
   list.dataset.empty = 'false';
-  list.prepend(el('div', { class: 'p-2.5 rounded bg-gray-900 border border-gray-800 flex items-start space-x-2' },
-    el('span', { class: 'text-indigo-400 font-bold' }, '\u{1F4AC}'),
-    el('div', { class: 'flex-1' },
-      el('div', { class: 'text-gray-200' }, `"${item.scrambled_text}"`),
-      el('div', { class: 'text-[10px] text-gray-500 mt-1' },
-        `${fmtTime(item.timestamp)} \u2022 ${item.duration_seconds.toFixed(1)}s speech`))));
+  const count = $('transcriptCount');
+  if (count) {
+    const n = list.children.length;
+    count.textContent = n === 1 ? '1 note' : `${n} notes`;
+  }
+  list.prepend(el('div', { class: 'p-3 rounded-xl bg-[var(--ink)]/80 border border-[var(--line)]' },
+    el('div', { class: 'text-[var(--paper)] leading-snug' }, item.scrambled_text),
+    el('div', { class: 'text-[11px] text-[var(--fog)] mt-1.5' },
+      `${fmtTime(item.timestamp)} · ${item.duration_seconds.toFixed(1)}s`)));
 }
 
 async function loadPrompts() {
@@ -201,21 +205,21 @@ async function loadPrompts() {
     const list = $('promptList');
     $('promptCount').textContent = `${entries.length} calls`;
     if (entries.length === 0) {
-      list.replaceChildren(el('div', { class: 'text-gray-500 italic' }, 'No model calls in the last 15 minutes.'));
+      list.replaceChildren(el('div', { class: 'text-[var(--fog)] italic' }, 'Nothing in the last 15 minutes.'));
       return;
     }
     const open = new Set([...list.querySelectorAll('details[open]')].map((d) => d.dataset.at));
     list.replaceChildren(...entries.map((entry) => {
-      const d = el('details', { class: 'p-2 rounded bg-gray-900/60 border border-gray-800', 'data-at': String(entry.at) });
+      const d = el('details', { class: 'p-2.5 rounded-lg bg-[var(--ink)]/70 border border-[var(--line)]', 'data-at': String(entry.at) });
       d.open = open.has(d.dataset.at);
-      const summary = el('summary', { class: 'cursor-pointer text-gray-300 truncate' },
-        `${fmtTime(entry.at)} \u2022 ${entry.model} \u2022 ${entry.prompt.slice(0, 90)}`);
+      const summary = el('summary', { class: 'cursor-pointer text-[var(--mist)] truncate' },
+        `${fmtTime(entry.at)} · ${entry.model} · ${entry.prompt.slice(0, 90)}`);
       d.append(summary);
-      for (const [label, text] of [['SYSTEM', entry.system], ['PROMPT', entry.prompt], ['OUTPUT', entry.output ?? '(waiting for the model\u2026)']]) {
+      for (const [label, text] of [['System', entry.system], ['Prompt', entry.prompt], ['Output', entry.output ?? '(waiting…)']]) {
         if (!text) continue;
         d.append(
-          el('div', { class: 'text-[10px] font-bold text-indigo-400 mt-2' }, label),
-          el('pre', { class: 'whitespace-pre-wrap text-gray-200' }, text));
+          el('div', { class: 'text-[10px] font-bold text-indigo-300 mt-2' }, label),
+          el('pre', { class: 'whitespace-pre-wrap text-[var(--paper)]' }, text));
       }
       return d;
     }));

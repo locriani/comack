@@ -30,7 +30,7 @@ import re
 DEVICE_PATH_PATTERNS = (
     re.compile(r"^/api/comics/current(\.png|\.bin)?$"),
     re.compile(r"^/api/comics/\d+/png$"),
-    re.compile(r"^/api/comics/\d+/bin$"),
+    re.compile(r"^/api/comics/\d+/(color\.)?bin(/\d+)?$"),
     re.compile(r"^/api/comics/\d+/(color|panel\d+)\.png$"),
     re.compile(r"^/api/device/buttons$"),
 )

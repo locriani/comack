@@ -61,7 +61,7 @@ class TestRemoteContract:
                      "http://gpu-box:8000/v1", "http://gpu-box:8000/v1/"):
             captured.clear()
             settings.FLUX_API_URL = base
-            fg.flux_generator._generate_via_api("comic panel: A cat", (380, 420))
+            fg.flux_generator._generate_via_api(fg.panel_art_prompt("A cat"), (380, 420))
             assert str(captured[0].url) == "http://gpu-box:8000/v1/images/generations", base
 
     def test_payload_is_openai_shaped(self, restore_settings, monkeypatch):
@@ -72,7 +72,7 @@ class TestRemoteContract:
         img = fg.flux_generator.generate_panel_art("A cat astronaut", (380, 420))
         body = json.loads(captured[0].content)
         assert body == {
-            "prompt": "comic panel: A cat astronaut",  # prefix matches the local path
+            "prompt": fg.panel_art_prompt("A cat astronaut"),
             "n": 1,
             "size": "380x420",
             "response_format": "b64_json",
@@ -87,6 +87,17 @@ class TestRemoteContract:
         _mock_http(monkeypatch, lambda req: _b64_response(), captured)
         fg.flux_generator._generate_via_api("comic panel: A cat", (380, 420))
         assert json.loads(captured[0].content)["model"] == "flux-schnell"
+
+    def test_flux3_payload_uses_resolution_tier_not_pixels(self, restore_settings, monkeypatch):
+        settings.FLUX_API_URL = "http://gpu-box:8000"
+        settings.FLUX_API_MODEL = "black-forest-labs/flux-3-image"
+        captured = []
+        _mock_http(monkeypatch, lambda req: _b64_response(), captured)
+        fg.flux_generator._generate_via_api("comic panel: A cat", (380, 420))
+        body = json.loads(captured[0].content)
+        assert body["resolution"] == "768"
+        assert body["aspect_ratio"] == fg.nearest_aspect_ratio(380, 420)
+        assert "size" not in body
 
     def test_bearer_header_sent_when_key_set(self, restore_settings, monkeypatch):
         settings.FLUX_API_URL = "http://gpu-box:8000"
@@ -203,5 +214,6 @@ class TestPromptLog:
         fg.flux_generator.generate_panel_art("A cat", (380, 420))
         entry = llm.prompt_log[-1]
         assert entry["model"] == "flux-schnell"
-        assert entry["prompt"] == "comic panel: A cat"
+        assert entry["prompt"] == fg.panel_art_prompt("A cat")
+        assert "no speech bubbles" in entry["prompt"]
         assert entry["output"] == "[remote image 6x5]"

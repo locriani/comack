@@ -38,7 +38,8 @@ from server.pipelines import pipelines
 from server.privacy.thematic_miner import mine_sentences
 from server.privacy.pos_scrambler import pools
 from server.llm import prompt_log, expire_prompt_log
-from server.story.narrative_engine import engine_for
+from server.story.narrative_engine import engine_for, lines_wanted as next_lines_wanted
+from server.story.transcript_batch import parse_lines_wanted, select_transcript_batch
 from server.render.comic_compositor import comic_compositor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -87,17 +88,22 @@ async def _generation_cycle(device_id: str) -> Dict[str, Any]:
     """Execute a comic generation cycle for one device."""
     logger.info(f"Executing comic generation cycle for device '{device_id}'...")
 
-    # 1. Fetch this device's unconsumed scrambled transcripts
+    # 1. Room notes: honor the previous issue's lines_wanted_next (oldest first).
     unprocessed = db.get_unprocessed_transcripts(device_id)
-    logger.info(f"Gathered {len(unprocessed)} dialogue snippets for this cycle.")
+    wanted = parse_lines_wanted(db.get_state(f"lines_wanted:{device_id}", str(settings.DEFAULT_LINES_WANTED)))
+    batch = select_transcript_batch(unprocessed, wanted)
+    logger.info(
+        f"Gathered {len(batch)} dialogue snippets for this cycle "
+        f"(wanted {wanted}; {len(unprocessed) - len(batch)} left queued)."
+    )
 
     # 2. Generate script with narrative continuity
-    script = await engine_for(device_id).generate_comic_script(unprocessed)
-    
+    script = await engine_for(device_id).generate_comic_script(batch)
+
     # 3. Render and dither 800x480 comic image + 48,000-byte bin
     # Off the event loop: FLUX waits for VRAM and renders for minutes; audio must keep flowing.
     png_path, bin_path = await asyncio.to_thread(comic_compositor.compose_comic, script)
-    
+
     # 4. Save comic into database
     comic_id = db.save_comic(
         issue_number=script["issue_number"],
@@ -109,13 +115,12 @@ async def _generation_cycle(device_id: str) -> Dict[str, Any]:
         image_path=str(png_path),
         bin_path=str(bin_path)
     )
-    
-    db.set_state(f"lines_wanted:{device_id}", str(script["lines_wanted_next"]))
 
-    # 5. Mark transcripts as used
-    if unprocessed:
-        transcript_ids = [t["id"] for t in unprocessed]
-        db.mark_transcripts_used(transcript_ids, comic_id)
+    db.set_state(f"lines_wanted:{device_id}", str(next_lines_wanted(script)))
+
+    # 5. Mark only the notes this issue consumed
+    if batch:
+        db.mark_transcripts_used([t["id"] for t in batch], comic_id)
         
     comic_record = {
         "id": comic_id,
@@ -223,7 +228,7 @@ async def scheduler_tick(started: float) -> None:
         device_id = pipe.device_id
         last = db.get_recent_comics(device_id=device_id, limit=1)
         since = time.time() - (last[0]["created_at"] if last else started)
-        wanted = int(db.get_state(f"lines_wanted:{device_id}", str(settings.DEFAULT_LINES_WANTED)))
+        wanted = parse_lines_wanted(db.get_state(f"lines_wanted:{device_id}", str(settings.DEFAULT_LINES_WANTED)))
         if not generation_lock.locked() and comic_due(since, len(db.get_unprocessed_transcripts(device_id)), wanted):
             await run_comic_generation_cycle(device_id=device_id)
 
@@ -456,8 +461,9 @@ async def get_system_status():
         "sneaky": sneaky,
         "settings": {
             "silence_threshold_seconds": settings.SNEAKY_SILENCE_SECONDS,
-            "lines_wanted": int(db.get_state("lines_wanted", str(settings.DEFAULT_LINES_WANTED))),
-            "lines_collected": len(db.get_unprocessed_transcripts()),
+            "lines_wanted": parse_lines_wanted(db.get_state(
+                f"lines_wanted:{DEFAULT_DEVICE_ID}", str(settings.DEFAULT_LINES_WANTED))),
+            "lines_collected": len(db.get_unprocessed_transcripts(DEFAULT_DEVICE_ID)),
             "pos_scramble_rate": settings.POS_SCRAMBLE_RATE
         }
     }
@@ -648,6 +654,38 @@ async def get_issue_bin(issue_number: int):
     with open(path, "rb") as f:
         data = f.read()
     return Response(content=data, media_type="application/octet-stream")
+
+
+async def _color_bin_path(issue_number: int) -> Path:
+    """Spectra 6 image path (192,000 bytes); built on first request when missing."""
+    path = COMICS_DIR / f"issue_{issue_number:04d}_color.bin"
+    if not path.exists():
+        try:
+            path = await asyncio.to_thread(comic_compositor.write_color_bin, issue_number)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Issue #{issue_number} not found")
+    return path
+
+
+@app.get("/api/comics/{issue_number}/color.bin")
+async def get_issue_color_bin(issue_number: int):
+    """Full Spectra 6 image for the E1002 (4 bits per pixel, 192,000 bytes)."""
+    path = await _color_bin_path(issue_number)
+    return Response(content=path.read_bytes(), media_type="application/octet-stream")
+
+
+@app.get("/api/comics/{issue_number}/color.bin/{part}")
+async def get_issue_color_bin_part(issue_number: int, part: int):
+    """One 48,000-byte quarter of the Spectra 6 image (`part` 0..3).
+
+    The E1002 pulls colour in four GETs: a single 192 KB transfer often stalls
+    on MicroLink/WireGuard and the device falls back to black-and-white.
+    """
+    if part < 0 or part > 3:
+        raise HTTPException(status_code=404, detail=f"color.bin part {part} out of range")
+    data = (await _color_bin_path(issue_number)).read_bytes()
+    start = part * 48_000
+    return Response(content=data[start:start + 48_000], media_type="application/octet-stream")
 
 
 @app.get("/api/transcripts/recent")

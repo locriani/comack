@@ -96,10 +96,7 @@ a light install.
 
 ![Onboarding wizard: Welcome to Comack](images/onboarding-welcome.png)
 
-**Story LLM.** Any OpenAI-compatible chat endpoint (llama.cpp, vLLM, Ollama…).
-Leave it empty to skip story mining. The **Test** button runs the same
-read-only probe the settings page uses — on a fresh install it says exactly
-what is true:
+**Story LLM.** Any OpenAI-compatible chat endpoint (llama.cpp, vLLM, Ollama, hosted APIs…). Leave it empty to skip story mining. Endpoints that authenticate need an **API key** on this step (`LLM_API_KEY`). The **Test** button runs the same read-only probe the settings page uses — on a fresh install it says exactly what is true:
 
 ![Onboarding wizard: Story LLM step with probe result](images/onboarding-llm-probe.png)
 
@@ -144,8 +141,9 @@ pip install -e '.[local-inference]'
 
 This is several gigabytes of wheels and, on first use, model downloads
 (Whisper weights, SD-Turbo or FLUX.1-schnell). If you would rather not, point
-`LLM_URL` and `FLUX_API_URL` at external OpenAI-compatible endpoints instead —
-see [configuration reference](configuration-reference.md) and
+`LLM_URL` / `LLM_API_KEY` and `FLUX_API_URL` / `FLUX_API_KEY` at external
+OpenAI-compatible endpoints instead — see
+[configuration reference](configuration-reference.md) and
 [presets](../presets/). The settings page's **Test connection** buttons report
 which backends are usable right now:
 

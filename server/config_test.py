@@ -19,6 +19,7 @@ from fastapi import APIRouter, Body
 
 from server import llm
 from server.config import settings
+from server.config_api import MASKED
 
 logger = logging.getLogger("comack.config_test")
 
@@ -28,8 +29,8 @@ PROBE_TIMEOUT_S = 5.0
 
 # Per-request override keys and the settings fields they shadow, so a probe
 # either uses what was typed in the UI or the current configuration.
-LLM_OVERRIDES = {"url": "LLM_URL", "model": "LLM_MODEL"}
-IMAGE_OVERRIDES = {"url": "FLUX_API_URL", "model": "FLUX_MODEL_ID"}
+LLM_OVERRIDES = {"url": "LLM_URL", "model": "LLM_MODEL", "api_key": "LLM_API_KEY"}
+IMAGE_OVERRIDES = {"url": "FLUX_API_URL", "model": "FLUX_MODEL_ID", "api_key": "FLUX_API_KEY"}
 WHISPER_OVERRIDES = {"model_size": "WHISPER_MODEL_SIZE"}
 
 
@@ -103,6 +104,10 @@ async def test_llm(overrides: Dict[str, Any] = Body(default={})):
     server lists models, whether the configured model is among them."""
     resolved = _resolve(overrides, LLM_OVERRIDES)
     url, model = resolved["url"].strip(), resolved["model"].strip()
+    api_key = resolved.get("api_key", "").strip()
+    # The settings UI shows MASKED for a saved key — probe with the real one.
+    if api_key == MASKED:
+        api_key = settings.LLM_API_KEY
     result: Dict[str, Any] = {"ok": False, "message": "", "detail": {"url": url, "model": model}}
     if not url:
         result["message"] = "No LLM endpoint configured — story mining is disabled until one is set."
@@ -110,7 +115,8 @@ async def test_llm(overrides: Dict[str, Any] = Body(default={})):
         return result
     result["detail"]["configured"] = True
     try:
-        resp = await _http_get(llm.api_url(url, "models"))
+        # Same Bearer shape as complete_json / OpenRouter; empty key = no header.
+        resp = await _http_get(llm.api_url(url, "models"), llm.auth_headers(api_key, base_url=url))
         result = _find(resp, result)
         models = result["detail"].get("models")
         if model and models is not None:
@@ -153,16 +159,16 @@ async def test_image(overrides: Dict[str, Any] = Body(default={})):
     device and free VRAM. Never loads a pipeline, never generates an image."""
     resolved = _resolve(overrides, IMAGE_OVERRIDES)
     url = resolved["url"].strip()
+    api_key = resolved.get("api_key", "").strip()
+    if api_key == MASKED:
+        api_key = settings.FLUX_API_KEY
     if url:
         result: Dict[str, Any] = {"ok": False, "message": "", "detail": {"mode": "external", "url": url}}
         probe_url = llm.api_url(url, "models")
         try:
-            if settings.FLUX_API_KEY:
-                # The key rides as a Bearer header exactly as a remote render would send it;
-                # this stays a reachability check, never a paid generation.
-                resp = await _http_get(probe_url, {"Authorization": f"Bearer {settings.FLUX_API_KEY}"})
-            else:
-                resp = await _http_get(probe_url)
+            # Bearer when a key is typed or already saved; never a paid generation.
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+            resp = await _http_get(probe_url, headers)
             return _find(resp, result)
         except Exception as error:
             return _unreachable(result, error)

@@ -40,13 +40,8 @@ The honest chain to check, in order:
    `LLM_URL is not set; skipping the LLM call`, and the first-comic cycle
    logs `Error executing immediate comic cycle: the LLM did not invent a new
    arc; the next cycle retries`. Set `LLM_URL` (Settings → Story LLM → Test)
-   to any OpenAI-compatible endpoint. Empty means mining — and therefore
-   comics — stay off.
-2. **LLM set but unreachable.** The probe message is
-   `Could not reach the endpoint.` with a `ConnectError` in the details.
-   Check the URL (many llama.cpp-style servers serve at `/v1` — e.g.
-   `http://host:8080/v1`), and that the endpoint is up and reachable from
-   the *server's* network position (container, VPN…).
+   to any OpenAI-compatible endpoint. Empty means mining — and therefore comics — stay off. Hosted providers (OpenRouter, OpenAI, …) also need `LLM_API_KEY` (Settings → Story LLM → API key, or the onboarding field).
+2. **LLM set but unreachable / unauthorized.** The probe message is `Could not reach the endpoint.` with a `ConnectError` in the details, or an HTTP 401/403 when the key is missing or wrong. Check the URL (many llama.cpp-style servers serve at `/v1` — e.g. `http://host:8080/v1`), that `LLM_API_KEY` is set for hosts that authenticate, and that the endpoint is up and reachable from the *server's* network position (container, VPN…).
 3. **Image rendering.** Without a render backend the pipeline dies later,
    after mining. `POST /api/config/test/image` (or Settings → Test
    connection) distinguishes:

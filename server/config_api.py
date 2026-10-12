@@ -58,6 +58,10 @@ def mask_url_credentials(value: str) -> str:
 
 def mask_value(name: str, value: Any) -> Any:
     if is_secret_field(name):
+        # Empty secrets stay empty so the Settings UI can show a blank
+        # password field (OpenRouter keys, etc.) instead of a fake mask.
+        if value in ("", None) or value == []:
+            return value
         return MASKED
     if isinstance(value, str) and "://" in value:
         return mask_url_credentials(value)

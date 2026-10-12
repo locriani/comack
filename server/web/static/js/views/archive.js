@@ -81,8 +81,8 @@ export function initArchive(section) {
       const active = arc.status.toLowerCase() === 'active';
       return el('button', {
         class: `text-left shrink-0 w-64 border rounded-xl p-3 space-y-1 transition ${active
-          ? 'border-indigo-500 bg-indigo-950/40 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
-          : 'border-gray-800 bg-[#161922] hover:border-gray-600'}`,
+          ? 'border-indigo-500 bg-indigo-950/40 shadow-[0_0_16px_rgba(42,157,143,0.22)]'
+          : 'border-[var(--line)] bg-[var(--ink-2)] hover:border-indigo-700'}`,
         onclick: () => { activeFilter = arc.id; render(); },
         title: arc.premise,
       },
@@ -129,7 +129,7 @@ export function initArchive(section) {
     const held = c.status === 'STEALTH_HOLD';
     return el('a', {
       href: `/reader#${c.issue_number}`,
-      class: 'group bg-[#161922] border border-gray-800 rounded-xl overflow-hidden hover:border-indigo-500 transition flex flex-col',
+      class: 'group card overflow-hidden hover:border-indigo-500 transition flex flex-col',
     },
       el('div', { class: 'bg-[#e2e4e9] p-1' },
         el('img', {

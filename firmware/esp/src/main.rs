@@ -3,7 +3,7 @@
 //! The composition root: builds the ESP-IDF and MicroLink adapters, plugs
 //! them into the `comack-core` use cases and schedules them.
 //!
-//! * Unconfigured boots (or a 3 s hold of the left/back button) run the
+//! * Unconfigured boots (or a 10 s hold of all three buttons) run the
 //!   provisioning portal: a `comack-setup` SoftAP with a phone-friendly
 //!   setup form; the e-paper shows instructions and progress.
 //! * Wi-Fi supervisor thread: joins and rotates networks.
@@ -13,6 +13,7 @@
 
 mod buttons;
 mod clock;
+mod color;
 mod lan;
 mod latch;
 mod led;
@@ -27,6 +28,7 @@ mod wifi;
 
 use std::ffi::{CStr, CString};
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -69,15 +71,28 @@ use crate::tailnet::{Tailnet, TailnetConfig};
 /// hangs this long counts as unreachable, not merely slow.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How long Wi-Fi association may stay pending before the e-paper names
+/// the SSID as stuck. The supervisor keeps retrying underneath.
+const WIFI_TIMEOUT: Duration = Duration::from_secs(40);
+
 /// How long Tailscale registration may stay pending before the e-paper
 /// names the likely culprit (the auth key). Registration keeps being
 /// awaited — a slow coordinator eventually completes.
 const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Contiguous flash/serial marker (`COMACK_BOARD=e1001` / `=e1002`) so
+/// `scripts/detect-reterminal-board.sh` can tell the panels apart — USB and
+/// the ESP32-S3 are identical between E1001 and E1002.
+const BOARD_MARKER: &str = if cfg!(feature = "e1002") {
+    "COMACK_BOARD=e1002"
+} else {
+    "COMACK_BOARD=e1001"
+};
+
 fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
     EspLogger::initialize_default();
-    info!("COMACK: reTerminal E1001 display, native Tailscale node via MicroLink");
+    info!("{BOARD_MARKER}; reTerminal display, native Tailscale node via MicroLink");
 
     let peripherals = Peripherals::take()?;
     let pins = peripherals.pins;
@@ -85,15 +100,11 @@ fn main() -> Result<()> {
     // Erases and re-initialises NVS if its layout changed.
     let nvs = EspDefaultNvsPartition::take()?;
 
-    // The setup button first: a hold at boot re-enters provisioning before
-    // anything else runs. The same pin later becomes the viewer's back
-    // button, whose tick keeps feeding the shared hold detector.
-    let mut setup_pin = PinDriver::input(pins.gpio5, Pull::Up)?;
-    let forced_setup = setup_button::held_now(&mut setup_pin);
-    let setup_hold = Arc::new(SetupHold::new());
+    // Setup-chord NVS flag first: a prior trip leaves "open portal" so the
+    // next boot does not need another 10 s hold through the reboot.
+    setup_button::init(&nvs);
+    let pending_setup = setup_button::take_request(&nvs);
 
-    // The configuration the device runs with: what the on-chip store
-    // holds, else this build's compile-time secrets.
     let mut store = match NvsDeviceConfigStore::open(nvs.clone()) {
         Ok(store) => Some(store),
         Err(e) => {
@@ -101,6 +112,17 @@ fn main() -> Result<()> {
             None
         }
     };
+
+    // Cold-boot gesture: all three held for 10 s (forward, back, trigger).
+    let mut button_pins = [
+        PinDriver::input(pins.gpio4, Pull::Up)?, // right white: forward
+        PinDriver::input(pins.gpio5, Pull::Up)?, // left white: back
+        PinDriver::input(pins.gpio3, Pull::Up)?, // green: trigger
+    ];
+    let forced_setup = pending_setup || setup_button::held_now(&mut button_pins);
+    let setup_hold = Arc::new(SetupHold::new());
+    setup_hold.spawn_poller();
+
     let (mut config, mut stored) = effective_config(store.as_ref())?;
     let unconfigured = config.networks.is_empty();
 
@@ -145,14 +167,21 @@ fn main() -> Result<()> {
         PinDriver::input(pins.gpio13, Pull::Up)?, // BUSY, low while busy
         FreeRtos,
     );
+    // The reTerminal E1002 is the colour sibling with identical wiring.
+    if cfg!(feature = "e1002") {
+        display = display.spectra6();
+    }
+    // Colour comics ride along: the source fills the slot, the display shows it.
+    let color_slot = color::ColorSlot::new()?;
+    let mut display = color::ColorSwitch::new(display, Rc::clone(&color_slot));
     // Front buttons; falling-edge interrupts latch presses that arrive
     // while the viewer's loop is blocked (see InterruptButtons).
+    let [forward, back, trigger] = button_pins;
     let mut buttons = InterruptButtons::new(
         Arc::new(PressLatch::new()),
-        PinDriver::input(pins.gpio4, Pull::Up)?, // right white: forward
-        setup_pin,                               // left white: back + setup hold
-        PinDriver::input(pins.gpio3, Pull::Up)?, // green: trigger
-        Arc::clone(&setup_hold),
+        forward,
+        back,
+        trigger,
     )
     .context("buttons")?;
     // Onboard LED, inverted logic: LOW means on (Seeed board wiki).
@@ -170,16 +199,28 @@ fn main() -> Result<()> {
         (config, stored) = effective_config(Some(store))?;
     }
 
-    // The connecting screen only for a provisioned config; a
-    // compile-time-secrets boot stays silent, as it always has.
-    if stored {
-        if let Some(first) = config.networks.first() {
-            screens::connecting(&mut display, &mut frame, first.ssid.as_str())
-                .map_err(|e| anyhow::anyhow!("connecting screen: {e:?}"))?;
-        }
+    // Progress screens only for a provisioned config; a compile-time-secrets
+    // boot stays silent, as it always has.
+    let primary_ssid = config
+        .networks
+        .first()
+        .map(|n| n.ssid.as_str().to_string())
+        .unwrap_or_default();
+    if stored && !primary_ssid.is_empty() {
+        screens::connecting_wifi(&mut display, &mut frame, &primary_ssid)
+            .map_err(|e| anyhow::anyhow!("wifi connecting screen: {e:?}"))?;
     }
 
-    wifi::supervise_networks(wifi, config.networks.clone())?.wait();
+    let online = wifi::supervise_networks(wifi, config.networks.clone())?;
+    wait_for_wifi(
+        &online,
+        &primary_ssid,
+        stored,
+        &mut display,
+        &mut frame,
+        &mut buttons,
+        &setup_hold,
+    )?;
 
     // MicroLink keeps the pointers it is given, so the configured identity
     // leaks once and lives for the power cycle — including the server host,
@@ -196,7 +237,7 @@ fn main() -> Result<()> {
         device_token: Box::leak(String::from(config.device_token.as_str()).into_boxed_str()),
     };
 
-    if config.tailscale_auth_key.is_empty() {
+    if !has_tailscale_key(config.tailscale_auth_key.as_str()) {
         // No tailnet: an entirely legitimate setup. The server must be on
         // the same LAN and reachable by its DNS name or literal IP.
         info!("No Tailscale auth key configured: running LAN-only (no tailnet).");
@@ -208,6 +249,7 @@ fn main() -> Result<()> {
             buttons,
             led,
             &mut frame,
+            color_slot,
             host,
             config.server_port,
             identity,
@@ -218,6 +260,10 @@ fn main() -> Result<()> {
             "Starting Tailscale (auth key {:.15}...)",
             auth_key.to_string_lossy()
         );
+        if stored {
+            screens::joining_tailscale(&mut display, &mut frame)
+                .map_err(|e| anyhow::anyhow!("tailscale joining screen: {e:?}"))?;
+        }
         let tailnet = Tailnet::start(&TailnetConfig {
             auth_key,
             device_name,
@@ -239,6 +285,7 @@ fn main() -> Result<()> {
             buttons,
             led,
             &mut frame,
+            color_slot,
             host,
             config.server_port,
             identity,
@@ -246,6 +293,13 @@ fn main() -> Result<()> {
         )?;
     }
     unreachable!("run_viewer never returns")
+}
+
+/// Real auth keys only — the secrets example's `tskey-auth-XXXX` placeholder
+/// must not start MicroLink (that path never registers).
+fn has_tailscale_key(key: &str) -> bool {
+    let key = key.trim();
+    !key.is_empty() && key != "tskey-auth-XXXX"
 }
 
 /// The configuration the device runs with: what the on-chip store holds,
@@ -257,9 +311,19 @@ fn main() -> Result<()> {
 /// a logged reason — never to a failed boot — so an already-flashed device
 /// keeps coming up exactly as it did before runtime configuration existed.
 fn effective_config(store: Option<&NvsDeviceConfigStore>) -> Result<(DeviceConfig, bool)> {
+    // Site-specific host/port ride in the gitignored one-shot secrets render
+    // (scrubbed after flash). Empty host keeps the OSS default in config.rs.
+    let server = if secrets::SERVER_HOST.is_empty() {
+        config::SERVER
+    } else {
+        config::ServerEndpoint {
+            host: secrets::SERVER_HOST,
+            port: secrets::SERVER_PORT,
+        }
+    };
     let fallback = DeviceConfig::from_compile_time(
         &secrets::wifi_networks(),
-        config::SERVER,
+        server,
         config::DEVICE_NAME,
         secrets::DEVICE_ID,
         secrets::DEVICE_TOKEN,
@@ -290,9 +354,38 @@ fn effective_config(store: Option<&NvsDeviceConfigStore>) -> Result<(DeviceConfi
     }
 }
 
+/// Bounded wait for the first Wi-Fi IP. Past [`WIFI_TIMEOUT`] the e-paper
+/// names the SSID as stuck; the supervisor keeps retrying, and the setup
+/// gesture stays live throughout (unlike a bare latch wait).
+fn wait_for_wifi(
+    online: &crate::latch::Latch,
+    ssid: &str,
+    show_screens: bool,
+    display: &mut impl FrameDisplay,
+    frame: &mut Frame,
+    buttons: &mut InterruptButtons,
+    setup_hold: &SetupHold,
+) -> Result<()> {
+    let start = Instant::now();
+    let mut stuck_shown = false;
+    while !online.is_set() {
+        let _ = buttons.levels();
+        if setup_hold.tripped() {
+            restart_into_setup();
+        }
+        if show_screens && !ssid.is_empty() && !stuck_shown && start.elapsed() >= WIFI_TIMEOUT {
+            screens::wifi_stuck(display, frame, ssid)
+                .map_err(|e| anyhow::anyhow!("wifi stuck screen: {e:?}"))?;
+            stuck_shown = true;
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+    Ok(())
+}
+
 /// Bounded wait for tailnet registration. Past [`REGISTRATION_TIMEOUT`]
 /// the e-paper names the auth key as the likely culprit; the wait itself
-/// continues, and the setup button stays live throughout.
+/// continues, and the setup gesture stays live throughout.
 fn wait_for_registration(
     tailnet: &Tailnet,
     display: &mut impl FrameDisplay,
@@ -303,7 +396,7 @@ fn wait_for_registration(
     let start = Instant::now();
     let mut stuck_shown = false;
     while !tailnet.registered().is_set() {
-        // Feeds the setup-hold detector via the back pin.
+        // ChordGuard still needs levels(); the setup poller owns the hold.
         let _ = buttons.levels();
         if setup_hold.tripped() {
             restart_into_setup();
@@ -319,7 +412,7 @@ fn wait_for_registration(
 }
 
 /// Resolve the configured server and prove it accepts connections, with
-/// the unreachable screen naming the retry loop. The setup button stays
+/// the unreachable screen naming the retry loop. The setup gesture stays
 /// live: a hold restarts the device into provisioning.
 fn wait_for_server<C, R>(
     locator: &ServerLocator<'_, R>,
@@ -337,7 +430,6 @@ where
 {
     let mut screen_shown = false;
     loop {
-        // Feeds the setup-hold detector via the back pin.
         let _ = buttons.levels();
         if setup_hold.tripped() {
             restart_into_setup();
@@ -364,7 +456,7 @@ where
 
 /// Everything after Wi-Fi and (when configured) the tailnet: probe the
 /// server, spawn the audio streamer, and run the viewer loop until the
-/// setup button sends the device back into provisioning. Returns only on
+/// setup gesture sends the device back into provisioning. Returns only on
 /// a hard error in the pre-viewer steps; the viewer loop never ends.
 #[allow(clippy::too_many_arguments)] // one argument per wired port
 fn run_viewer<C, R>(
@@ -375,6 +467,7 @@ fn run_viewer<C, R>(
     mut buttons: InterruptButtons,
     led: InvertedLed,
     frame: &mut Frame,
+    color_slot: Rc<color::ColorSlot>,
     host: &'static str,
     port: u16,
     identity: DeviceIdentity<'static>,
@@ -399,17 +492,26 @@ where
 
     spawn_audio_streamer(connector, resolver, microphone, host, port, identity)?;
 
-    let client = HttpClient::new(connector, host, port, HttpConfig::default());
+    // Colour comics are 192 KB; MicroLink/WG can stall >5 s mid-body, and the
+    // HTTP client treats a silent recv as end-of-stream (Incomplete → B&W fallback).
+    let client = HttpClient::new(
+        connector,
+        host,
+        port,
+        HttpConfig {
+            connect_timeout: Duration::from_secs(10),
+            recv_timeout: Duration::from_secs(45),
+        },
+    );
     let comics = HttpComicService::new(
-        client,
-        server,
+        client, server,
         // The configured identity (stored config, else compile-time) rides
         // on the comic poll, the trigger, and the audio WebSocket handshake;
         // empty keeps the device on the server's `default` device as before.
         identity,
     );
     let mut viewer = ComicViewer::new(
-        comics,
+        color::ColorComics::new(comics, color_slot),
         display,
         buttons,
         EspClock,
@@ -427,7 +529,8 @@ where
 }
 
 fn restart_into_setup() -> ! {
-    info!("Setup button held; restarting into provisioning.");
+    info!("Setup gesture held; restarting into provisioning.");
+    setup_button::request_on_next_boot();
     // SAFETY: a clean restart into provisioning — no references outlive it.
     unsafe { esp_idf_svc::sys::esp_restart() }
 }

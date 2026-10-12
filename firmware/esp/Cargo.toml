@@ -21,6 +21,10 @@ opt-level = "s"
 debug = true
 opt-level = "z"
 
+[features]
+# Build for the reTerminal E1002 (7.3" Spectra 6 colour panel) instead of the E1001.
+e1002 = []
+
 [dependencies]
 anyhow = "1"
 comack-core = { path = "../crates/comack-core" }

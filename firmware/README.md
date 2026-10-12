@@ -97,11 +97,7 @@ and the portal changes them with nothing but a phone. The same fields
 (Wi-Fi SSID and password, server address, device name, optional Tailscale
 auth key) feed every path:
 
-- **On-device portal** (primary): whenever the device has no stored
-  configuration and no usable compile-time fallback — or you hold the setup
-  button for 3 seconds — it broadcasts a `comack-setup` Wi-Fi network, draws
-  instructions on the e-paper, and stores everything on-chip when you save.
-  Network changes later need no cable.
+- **On-device portal** (primary): whenever the device has no stored configuration and no usable compile-time fallback — or you hold all three front buttons together for 10 seconds — it broadcasts a password-protected (WPA2) `comack-setup` Wi-Fi network, draws the password, a join QR code and instructions on the e-paper, and stores everything on-chip when you save. Network changes later need no cable.
 - **`scripts/provision-device.sh`** (assisted first flash): since the first
   flash needs a cable anyway, this script collects the same fields at the
   computer and drives the build-and-flash in one step. It renders
@@ -111,7 +107,7 @@ auth key) feed every path:
 ### The on-device portal
 
 When the portal runs, the e-paper shows the steps: join the Wi-Fi network
-`comack-setup`, then open <http://192.168.4.1> in a phone or laptop browser.
+`comack-setup`, then open the address shown on the e-paper (<http://192.168.71.1>) in a phone or laptop browser.
 The page collects:
 
 | Field | Meaning | Validation before anything is saved |
@@ -128,10 +124,7 @@ steps and, if the server cannot be reached, a screen that names the retry
 loop. Rejected submissions save nothing — the config is never left half-set
 — and the portal stays up for a corrected entry.
 
-**The setup button is the left (back) button, GPIO 5.** Holding it for 3
-seconds from any state — including normal operation — restarts the device
-into the portal (keep holding through the brief reboot; the boot checks the
-same hold). The instructions and error screens name it.
+**The setup gesture is all three front buttons (GPIO 4/5/3) held together.** Holding them for 10 seconds from any state — including normal operation — records a flag and restarts into the portal (no need to keep holding through the reboot). The instructions and error screens name it. Button presses count after a 300 ms grace window so the gesture never also fires a trigger, forward or back; everything is ignored until all three are released.
 
 MicroLink initialises from the stored key when one is set; with an empty key
 the device never joins a tailnet and talks plain LAN TCP to the server. The
@@ -147,12 +140,10 @@ on-target test rig, so these checks are the owner's, on hardware:
 1. **Fresh device:** flash with no stored config and an empty
    `secrets.rs` network list → the device boots into the portal and the
    e-paper shows the join instructions.
-2. **Phone join:** join `comack-setup`, open `http://192.168.4.1`, fill the
+2. **Phone join:** join `comack-setup`, open the address on the e-paper (`http://192.168.71.1`), fill the
    form, save → the device leaves AP mode, joins the home Wi-Fi and comes
    online on the dashboard.
-3. **Network change without a cable:** hold the left (back) button 3 s →
-   the portal returns; join it and enter the new network → the device
-   reconnects, still with no cable.
+3. **Network change without a cable:** hold all three buttons 10 s → the portal returns; join it and enter the new network → the device reconnects, still with no cable.
 4. **Server-down error screen:** with the device running, stop the server →
    after a connect failure the e-paper shows the unreachable screen naming
    the retry loop; start the server again → the device recovers on its own.
@@ -177,7 +168,8 @@ and `espflash flash` as the manual flow above. Run it from the repo root:
 | `--server` | server hostname or `ip:port` | `localhost:8000` |
 | `--name` | device name | `comack-display` |
 | `--tskey` | Tailscale auth key (`tskey-auth-…`) | empty — placeholder kept |
-| `--port` | serial device for flashing or monitor | auto-detected by espflash |
+| `--serial-port` | serial device for flashing or monitor | auto-detected by espflash |
+| `--e1001` / `--e1002` | force monochrome or Spectra 6 colour build | auto-detected via `scripts/detect-reterminal-board.sh` |
 | `--yes` | never prompt (for scripted use) | — |
 | `--no-secrets` | leave `secrets.rs` untouched; build and flash it as-is | — |
 | `--no-flash` | render and build only | — |
@@ -187,6 +179,12 @@ and `espflash flash` as the manual flow above. Run it from the repo root:
 
 Behaviour worth knowing:
 
+- **Board auto-detect.** E1001 and E1002 share the same USB UART and ESP32-S3,
+  so the script cannot read the panel type from the chip ID. It calls
+  `scripts/detect-reterminal-board.sh`, which checks a MAC→board cache
+  (`firmware/esp/.board-by-mac`), then the boot log / flash for a
+  `COMACK_BOARD=` marker. Override with `--e1001` / `--e1002`; a successful
+  flash updates the cache.
 - **Idempotent.** After a successful flash the script records what it flashed
   in `firmware/esp/.provision-state` (hashes only — no secrets, and
   gitignored). Rerunning with the same values is a no-op; `--force` re-flashes.
@@ -276,7 +274,7 @@ boundary.
 |---|---|
 | PDM mic CLK / DIN / power enable | 42 / 41 / 38 |
 | E-paper SCK / MOSI / CS / DC / RST / BUSY (active low) | 7 / 9 / 10 / 11 / 12 / 13 |
-| Buttons: forward (right white) / back (left white, **also the setup button** — hold 3 s for the portal) / trigger (green), active low | 4 / 5 / 3 |
+| Buttons: forward (right white) / back (left white) / trigger (green) — **all three held 10 s opens the setup portal**, active low | 4 / 5 / 3 |
 | Onboard LED, active low (LOW = on) | 6 |
 
 ## Behaviour compared with the C++ firmware

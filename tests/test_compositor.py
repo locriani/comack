@@ -4,7 +4,7 @@ from unittest.mock import patch
 from server.layouts import LAYOUTS, resolve_layout
 from server.render.comic_compositor import comic_compositor
 from server.render.flux_generator import flux_generator
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 def panel(n):
@@ -34,17 +34,21 @@ class TestComicCompositor(unittest.TestCase):
                 png_path.unlink()
                 bin_path.unlink()
                 png_path.with_name("issue_0999_color.png").unlink()
+                color_bin = png_path.with_name("issue_0999_color.bin")
+                self.assertEqual(os.path.getsize(color_bin), 192000)  # 4 bits per pixel
+                color_bin.unlink()
 
     def test_originals_are_saved(self):
         art = Image.new("RGB", (1024, 480), (200, 30, 30))   # the model's own resolution, in color
         script = {"issue_number": 998, "title": "Red", "layout_type": "two-columns", "panels": [panel(1), panel(2)]}
         with patch.object(flux_generator, "generate_panel_art", return_value=art):
             png_path, bin_path = comic_compositor.compose_comic(script)
-        files = [png_path, bin_path] + [png_path.with_name(f"issue_0998_{s}.png") for s in ("panel1", "panel2", "color")]
+        files = [png_path, bin_path, png_path.with_name("issue_0998_color.bin")] + [
+            png_path.with_name(f"issue_0998_{s}.png") for s in ("panel1", "panel2", "color")]
         try:
-            with Image.open(files[2]) as original:
+            with Image.open(files[3]) as original:
                 self.assertEqual((original.size, original.getpixel((0, 0))), ((1024, 480), (200, 30, 30)))
-            with Image.open(files[4]) as page:   # the pre-halftone page keeps its color
+            with Image.open(files[5]) as page:   # the pre-halftone page keeps its color
                 self.assertIn((200, 30, 30), [c for _, c in page.getcolors(1 << 16)])
         finally:
             for f in files:
@@ -81,8 +85,27 @@ class TestComicCompositor(unittest.TestCase):
                 self.assertEqual(before.crop(below).tobytes(), after.crop(below).tobytes())
                 self.assertEqual(bin_path.read_bytes(), after.tobytes())
         finally:
-            for f in (png_path, bin_path, color):
+            for f in (png_path, bin_path, color, color.with_suffix(".bin")):
                 f.unlink()
+
+    def test_color_bin_is_served_and_made_on_demand(self):
+        from fastapi.testclient import TestClient
+        from server.config import COMICS_DIR
+        from server.main import app
+        client = TestClient(app)
+        color = COMICS_DIR / "issue_0995_color.png"
+        Image.new("RGB", (800, 480), (200, 30, 30)).save(color)
+        try:
+            reply = client.get("/api/comics/995/color.bin")   # no bin yet: made from the saved page
+            self.assertEqual((reply.status_code, len(reply.content)), (200, 192000))
+            part = client.get("/api/comics/995/color.bin/0")
+            self.assertEqual((part.status_code, len(part.content)), (200, 48000))
+            self.assertEqual(part.content, reply.content[:48000])
+            self.assertEqual(client.get("/api/comics/995/color.bin/4").status_code, 404)
+            self.assertEqual(client.get("/api/comics/994/color.bin").status_code, 404)
+        finally:
+            color.unlink()
+            color.with_suffix(".bin").unlink(missing_ok=True)
 
     def test_resolve_layout(self):
         self.assertEqual(resolve_layout("action", 4), "action")
@@ -90,8 +113,59 @@ class TestComicCompositor(unittest.TestCase):
         self.assertEqual(resolve_layout("action", 2), "two-columns")
         self.assertEqual(resolve_layout("2-panel", 3), "three-columns")
         self.assertEqual(resolve_layout("", 0), "splash")
-        self.assertEqual(resolve_layout("", 9), "five")
+        self.assertEqual(resolve_layout("", 9), "six-grid")
+        self.assertEqual(resolve_layout("six-strip", 6), "six-strip")
 
+    def test_lettering_honors_text_anchor(self):
+        """Captions park in the text_anchor band so they sit on clear art space."""
+        from server.render.lettering import draw_lettering
+        box = (100, 100, 400, 400)
+        x0, y0, x1, y1 = box
+        mx, my = (x0 + x1) // 2, (y0 + y1) // 2
+
+        def white_in(layer, region):
+            rx0, ry0, rx1, ry1 = region
+            n = 0
+            for y in range(ry0, ry1, 2):
+                for x in range(rx0, rx1, 2):
+                    if layer.getpixel((x, y))[0] > 240:
+                        n += 1
+            return n
+
+        # top-left lettering should put white caption pixels in the NW quadrant, not SE
+        layer = Image.new("RGB", (800, 480), (180, 180, 180))
+        draw_lettering(ImageDraw.Draw(layer), box, {
+            "narration": "Meanwhile in the quiet archive…",
+            "speech_balloons": [{"character": "Pip", "text": "Hello there friend."}],
+        }, "top-left")
+        self.assertGreater(white_in(layer, (x0, y0, mx, my)), white_in(layer, (mx, my, x1, y1)))
+
+        layer = Image.new("RGB", (800, 480), (180, 180, 180))
+        draw_lettering(ImageDraw.Draw(layer), box, {
+            "narration": "Meanwhile in the quiet archive…",
+            "speech_balloons": [{"character": "Pip", "text": "Hello there friend."}],
+        }, "bottom-right")
+        self.assertGreater(white_in(layer, (mx, my, x1, y1)), white_in(layer, (x0, y0, mx, my)))
+
+    def test_compose_passes_script_art_style_to_flux(self):
+        art = Image.new("RGB", (64, 64), (10, 20, 30))
+        script = {
+            "issue_number": 994,
+            "title": "Styled",
+            "layout_type": "splash",
+            "art_style": "rubber-hose cartoon",
+            "panels": [panel(1)],
+        }
+        with patch.object(flux_generator, "generate_panel_art", return_value=art) as gen:
+            png_path, bin_path = comic_compositor.compose_comic(script)
+        try:
+            self.assertTrue(gen.called)
+            self.assertEqual(gen.call_args.kwargs.get("art_style"), "rubber-hose cartoon")
+        finally:
+            for f in (png_path, bin_path, png_path.with_name("issue_0994_color.png"),
+                      png_path.with_name("issue_0994_color.bin"),
+                      png_path.with_name("issue_0994_panel1.png")):
+                f.unlink(missing_ok=True)
 
 if __name__ == "__main__":
     unittest.main()
