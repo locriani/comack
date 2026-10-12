@@ -337,7 +337,7 @@ async def reader():
 @app.websocket("/ws/audio")
 async def ws_audio_stream(websocket: WebSocket):
     """
-    Receives continuous 16kHz 16-bit mono PCM stream from reTerminal E1001 or simulator.
+    Receives continuous 16kHz 16-bit mono PCM stream from a reTerminal (E1001/E1002) or simulator.
 
     Identity gate (spec D1/D2): the stream resolves before accept — a valid
     ?device_id=&device_token= pair binds it to that device, absent identity binds
@@ -367,7 +367,7 @@ async def ws_audio_stream(websocket: WebSocket):
     # interleave into the same room's lane (and VAD), undefined by design.
     pipeline = pipelines.for_device(device["id"])
     pipeline.connected = True
-    logger.info(f"reTerminal E1001 audio streamer connected: device '{device['id']}'.")
+    logger.info(f"reTerminal audio streamer connected: device '{device['id']}'.")
     last_seen_write = time.time()
     db.touch_device(device["id"])
     try:
@@ -393,7 +393,7 @@ async def ws_audio_stream(websocket: WebSocket):
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket):
     """
-    Subscribes reTerminal E1001 and Web UI to status updates and sneaky refresh events.
+    Subscribes reTerminal and Web UI to status updates and sneaky refresh events.
     With WEB_TOKEN set, the browser event feed appends ?token= (WebSocket clients
     cannot send headers); the tokenless hardware uses /ws/audio instead.
     """
