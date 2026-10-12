@@ -43,6 +43,9 @@ def comic_script_system(title: str, genre: str, tone: str, art_style: str) -> st
         "do not invent a different look. "
         "scene_description is visuals only — never mention speech bubbles, balloons, captions, "
         "lettering, readable text, or SFX glyphs (those are drawn later in code). "
+        "Never ask for a tilted, dutch-angle, slanted, or rotated camera/frame in "
+        "scene_description — each panel bitmap must stay level and axis-aligned; "
+        "diagonal page layouts are drawn by the compositor as panel shapes, not by tilting the art. "
         "Choose layout_type from the beat's mood and energy first (splash for critical strikes "
         "and sweeping stillness; diagonals/action/strips for kinetic density; columns/tiers for "
         "talk and timing) — vary layouts across issues; do not default to the same shape. "
@@ -109,6 +112,9 @@ Layouts (name → when to use):
    visual-only image prompt that begins with {art_style!r}, then characters, action,
    setting, lighting — and explicitly leave clear empty negative space in that
    text_anchor zone (faces and key subjects go in the opposite area).
+   Keep every scene level (upright horizon, no dutch angle, no "tilted panel" /
+   "slanted frame" / rotated border). Kinetic energy comes from pose and motion
+   lines, not from tilting the camera — diagonal layouts are page shapes only.
    No speech bubbles, balloons, captions, text, or lettering in the art.
 3. Write narration and speech_balloons for this arc's cast and continuity. Keep them
    short enough to fit the text_anchor band. At most one balloon or caption may

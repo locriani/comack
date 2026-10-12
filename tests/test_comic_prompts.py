@@ -1,5 +1,6 @@
 """Comic script + panel-art prompt wording (continuity over room notes; no bubbles in art)."""
 from server.render.flux_generator import nearest_aspect_ratio, panel_art_prompt, remote_image_size_fields
+from server.render.panel_prompt import strip_tilt_direction
 from server.story.narrative_engine import comic_script_system, comic_script_user
 
 
@@ -10,6 +11,23 @@ def test_panel_art_prompt_forbids_speech_bubbles():
     assert "no dialogue balloons" in prompt
     assert "no text" in prompt
     assert "top third" in prompt  # default text_anchor clears the top
+    assert "axis-aligned" in prompt
+    assert "dutch angle" in prompt
+
+
+def test_panel_art_prompt_strips_tilted_frame_direction():
+    raw = (
+        "Tilted panel, the frame angled sharply. The released current has gathered "
+        "into a translucent traveler."
+    )
+    cleaned = strip_tilt_direction(raw)
+    assert "Tilted panel" not in cleaned
+    assert "frame angled" not in cleaned.lower()
+    assert "translucent traveler" in cleaned
+    prompt = panel_art_prompt(raw, text_anchor="top")
+    assert "Tilted panel" not in prompt
+    assert "translucent traveler" in prompt
+    assert "axis-aligned" in prompt
 
 
 def test_panel_art_prompt_appends_art_style():
@@ -81,3 +99,6 @@ def test_comic_script_prompts_prioritize_continuity_over_room_notes():
     assert "text_anchor" in user
     assert "negative space" in user.lower() or "clear empty" in user.lower()
     assert "six-grid" in user  # expanded layout menu is offered to the model
+    assert "dutch angle" in system.lower() or "tilted" in system.lower()
+    assert "level" in user.lower() and "tilted panel" in user.lower()
+    assert "panel art must stay level" in user.lower() or "stay level" in user.lower()

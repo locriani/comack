@@ -229,7 +229,8 @@ LAYOUT_STEERING = """Match layout_type to this issue's mood and energy (do not d
 - Chase / rush → "diagonal-three"; full chaos → "action"; rapid-fire → "four-strip" / "five-strip" / "six-strip".
 - Even multipanel talk → "grid" / "six-grid"; open wide then snaps → "wide-top-three" / "wide-bottom-three"; packed escalation → "five" / "five-cascade" / "hero-four".
 - Timeline / dossier dread → "four-tiers" / "six-tiers"; investigation board → "feature-five" / "quarter-burst" / "banner-four".
-Prefer diagonal / action / strip layouts when kinetic; prefer splash / widescreen / focus-center when vast or still."""
+Prefer diagonal / action / strip layouts when kinetic; prefer splash / widescreen / focus-center when vast or still.
+Important: diagonal/slanted layout names reshape the panel *boxes on the page*. Never describe a tilted camera, dutch angle, or slanted frame inside scene_description — panel art must stay level."""
 
 
 def layout_menu() -> str:
