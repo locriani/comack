@@ -4,6 +4,7 @@
  * the speech simulator. The DOM lives in index.html (#view-dashboard).
  */
 import { apiJson } from '../api.js';
+import { arcBibleDetails } from '../arc-bible.js';
 import { el, fmtTime } from '../dom.js';
 import { onEvent } from '../ws.js';
 
@@ -90,22 +91,25 @@ const deviceChip = (device) => el('span', {
   title: `device: ${device.id}`,
 }, el('span', { class: 'w-1.5 h-1.5 rounded-full bg-indigo-400' }), el('span', {}, device.name));
 
-function arcCard(device) {
+function arcCard(device, { bibleOpen = false } = {}) {
   const arc = device.active_arc;
   const progress = arc ? Math.min(100, 100 * arc.panels_used / arc.target_panels) : 0;
+  const bible = arc ? arcBibleDetails(arc, { open: bibleOpen, summary: 'Full series bible — tone, art, cast' }) : null;
   return el('div', { class: 'card p-4 flex flex-col gap-2', 'data-device-arc': device.id },
     el('div', { class: 'flex items-center justify-between gap-2' },
       deviceChip(device),
       el('span', { class: 'text-xs px-2 py-0.5 rounded-md bg-[var(--ink-3)] text-[var(--fog)] truncate' }, arc ? arc.genre : '—')),
-    el('h2', { class: 'text-lg font-bold truncate' }, arc ? arc.title : 'Starting the next series…'),
-    el('p', { class: 'text-sm text-[var(--fog)] italic line-clamp-2' },
+    el('h2', { class: 'text-lg font-bold' }, arc ? arc.title : 'Starting the next series…'),
+    el('p', { class: 'text-sm text-[var(--fog)] italic leading-relaxed' },
       arc ? `"${arc.premise}"` : 'A brand-new arc begins with the next issue.'),
     el('div', { class: 'pt-1' },
       el('div', { class: 'flex justify-between text-xs text-[var(--fog)] mb-1' },
         el('span', {}, 'Through this arc'),
         el('span', { class: 'mono' }, arc ? `${arc.panels_used} / ${arc.target_panels} panels` : '—')),
       el('div', { class: 'w-full bg-[var(--ink)] rounded-full h-1.5 overflow-hidden' },
-        el('div', { class: 'bg-indigo-500 h-1.5 rounded-full transition-all duration-500', style: `width: ${progress}%` }))));
+        el('div', { class: 'bg-indigo-500 h-1.5 rounded-full transition-all duration-500', style: `width: ${progress}%` })),
+    ),
+    bible);
 }
 
 function deviceCard(device) {
@@ -138,7 +142,11 @@ async function loadDevices() {
     const body = await apiJson('/api/devices');
     const devices = body.devices ?? [];
     $('deviceCount').textContent = devices.length === 1 ? '1 room' : `${devices.length} rooms`;
-    $('arcCards').replaceChildren(...devices.map(arcCard));
+    const openBibles = new Set(
+      [...$('arcCards').querySelectorAll('details[data-arc-bible][open]')].map((d) => d.dataset.arcBible));
+    $('arcCards').replaceChildren(...devices.map((device) => arcCard(device, {
+      bibleOpen: openBibles.has(String(device.active_arc?.id ?? '')),
+    })));
     $('deviceCards').replaceChildren(...devices.map(deviceCard));
   } catch (e) {
     console.error('Error loading devices:', e);
