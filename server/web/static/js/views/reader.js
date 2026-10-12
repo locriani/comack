@@ -7,6 +7,7 @@
  */
 import { apiJson } from '../api.js';
 import { arcBibleDetails } from '../arc-bible.js';
+import { bindLightbox } from '../lightbox.js';
 
 const $ = (id) => document.getElementById(id);
 let arcs = [], issues = [], at = 0, color = false;
@@ -28,12 +29,15 @@ function show(k) {
   $('viewEink').className = color ? '' : 'on';
   $('viewColor').className = color ? 'on' : '';
   $('panels').replaceChildren(...Array.from({ length: c.panel_count }, (_, i) => {
-    const a = Object.assign(document.createElement('a'), { href: `${base}/panel${i + 1}.png`, target: '_blank' });
-    const img = Object.assign(document.createElement('img'), { src: a.href, alt: `Panel ${i + 1}, raw`, loading: 'lazy' });
-    img.onerror = () => a.remove();   // procedural panels and older issues have no raw art
-    a.append(img);
-    return a;
+    const src = `${base}/panel${i + 1}.png`;
+    const img = Object.assign(document.createElement('img'), {
+      src, alt: `Panel ${i + 1}, raw`, loading: 'lazy',
+    });
+    img.onerror = () => img.remove();   // procedural panels and older issues have no raw art
+    bindLightbox(img, src, `Panel ${i + 1}`);
+    return img;
   }));
+  bindLightbox($('page'), () => $('page').src, c.title);
   $('arcTitle').textContent = arc.title;
   $('arcMeta').textContent = `${arc.genre} \u00b7 ${arc.status.toLowerCase()} \u00b7 ${deviceNames[arc.device_id] ?? arc.device_id ?? ''}`;
   const bibleHost = $('arcBible');

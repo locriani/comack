@@ -6,6 +6,7 @@
 import { apiJson } from '../api.js';
 import { arcBibleDetails } from '../arc-bible.js';
 import { el, fmtTime } from '../dom.js';
+import { bindLightbox } from '../lightbox.js';
 import { onEvent } from '../ws.js';
 
 const $ = (id) => document.getElementById(id);
@@ -160,15 +161,16 @@ function showOriginals(issue, panelCount) {
   color.onload = () => box.classList.remove('hidden');
   color.onerror = () => box.classList.add('hidden');   // older issues have no originals
   color.src = `${base}/color.png`;
+  bindLightbox(color, () => color.src, 'Colour composite');
   $('panelList').replaceChildren(...Array.from({ length: panelCount || 0 }, (_, i) => {
-    const a = el('a', { href: `${base}/panel${i + 1}.png`, target: '_blank' });
+    const src = `${base}/panel${i + 1}.png`;
     const img = el('img', {
-      src: a.href, alt: `Panel ${i + 1}, raw`, loading: 'lazy',
+      src, alt: `Panel ${i + 1}, raw`, loading: 'lazy',
       class: 'w-full h-auto rounded border border-gray-700',
     });
-    img.onerror = () => a.remove();   // procedural panels have no raw art
-    a.append(img);
-    return a;
+    img.onerror = () => img.remove();   // procedural panels have no raw art
+    bindLightbox(img, src, `Panel ${i + 1}`);
+    return img;
   }));
 }
 
