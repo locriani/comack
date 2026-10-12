@@ -17,6 +17,28 @@ WIDTH = settings.DISPLAY_WIDTH   # 800
 HEIGHT = settings.DISPLAY_HEIGHT # 480
 
 
+def fit_cover(image: Image.Image, size: Tuple[int, int]) -> Image.Image:
+    """Scale `image` to cover `size` without stretching, then center-crop.
+
+    FLUX returns its own aspect ratio; the panel box is a different shape.
+    Stretching made characters look squished — cover keeps proportions and
+    fills the panel (edges may clip; empty letterbox bars would look worse).
+    """
+    tw, th = size
+    if tw <= 0 or th <= 0:
+        return image
+    sw, sh = image.size
+    if sw <= 0 or sh <= 0:
+        return Image.new("RGB", (tw, th), (255, 255, 255))
+    scale = max(tw / sw, th / sh)
+    nw = max(1, round(sw * scale))
+    nh = max(1, round(sh * scale))
+    scaled = image.resize((nw, nh), Image.Resampling.LANCZOS)
+    left = max(0, (nw - tw) // 2)
+    top = max(0, (nh - th) // 2)
+    return scaled.crop((left, top, left + tw, top + th))
+
+
 def dither_to_1bit_monochrome(image: Image.Image) -> Tuple[Image.Image, bytes]:
     """
     Apply high-contrast Floyd-Steinberg error diffusion dithering.
@@ -39,10 +61,15 @@ class ComicCompositor:
         self.margin = 8
         self.gutter = 8
 
-    def compose_comic(self, script: Dict[str, Any]) -> Tuple[Path, Path]:
+    def compose_comic(self, script: Dict[str, Any],
+                      panel_arts: Optional[List[Optional[Image.Image]]] = None) -> Tuple[Path, Path]:
         """
         Compose an 800x480 comic strip based on script JSON.
         Returns: (png_path, bin_path)
+
+        When `panel_arts` is provided (same length as panels), those images are
+        pasted with aspect preserved instead of calling FLUX — used to rebuild
+        a page after a compositor fix without re-billing the image model.
         """
         issue_number = script.get("issue_number", 1)
         panels = script.get("panels", [])
@@ -65,7 +92,8 @@ class ComicCompositor:
         art_style = script.get("art_style") or ""
         try:
             originals = self._draw_panels(
-                canvas, layout_type, panels, left, top, area_w, area_h, h, art_style=art_style)
+                canvas, layout_type, panels, left, top, area_w, area_h, h,
+                art_style=art_style, panel_arts=panel_arts)
         finally:  # also when a panel gives up (PanelArtFailed): the pipeline holds ~17 GB of RAM
             release_pipeline()
 
@@ -136,8 +164,21 @@ class ComicCompositor:
         if Path(f"{stem}_color.png").exists():
             self.write_color_bin(script["issue_number"])
 
+    @staticmethod
+    def load_saved_panel_arts(issue_number: int, panel_count: int) -> Optional[List[Image.Image]]:
+        """All `issue_XXXX_panelN.png` originals, or None if any panel is missing."""
+        arts: List[Image.Image] = []
+        for i in range(1, panel_count + 1):
+            path = COMICS_DIR / f"issue_{issue_number:04d}_panel{i}.png"
+            if not path.exists():
+                return None
+            with Image.open(path) as im:
+                arts.append(im.convert("RGB").copy())
+        return arts
+
     def _draw_panels(self, canvas, layout_type, panels, left, top, area_w, area_h, h,
-                     art_style: str = "") -> List[Optional[Image.Image]]:
+                     art_style: str = "",
+                     panel_arts: Optional[List[Optional[Image.Image]]] = None) -> List[Optional[Image.Image]]:
         """Draws every panel; returns each panel's original model art (None for procedural art)."""
         originals = []
         for i, quad in enumerate(LAYOUTS[layout_type][1]):
@@ -152,9 +193,10 @@ class ComicCompositor:
             text_box = tuple(round(v) for v in (max(tlx, blx) + h, max(tly, try_) + h,
                                                 min(trx, brx) - h, min(bly, bry) - h))
             layer = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
+            reuse = panel_arts[i] if panel_arts and i < len(panel_arts) else None
             originals.append(self._render_panel(
                 layer, ImageDraw.Draw(layer), inner.getbbox(), text_box, panel_data, i,
-                art_style=art_style))
+                art_style=art_style, reuse_art=reuse))
             canvas.paste(layer, mask=inner)
             canvas.paste((0, 0, 0), mask=ImageChops.subtract(inner, inner.filter(ImageFilter.MinFilter(7))))
         return originals
@@ -162,7 +204,8 @@ class ComicCompositor:
     def _render_panel(self, canvas: Image.Image, draw: ImageDraw.ImageDraw,
                       box: Tuple[int, int, int, int], text_box: Tuple[int, int, int, int],
                       panel_data: Dict[str, Any], index: int,
-                      art_style: str = "") -> Optional[Image.Image]:
+                      art_style: str = "",
+                      reuse_art: Optional[Image.Image] = None) -> Optional[Image.Image]:
         """Render illustration (filling box), then narrator box, speech balloons, and SFX (inside text_box).
         The caller clips to the panel shape and draws the frame. Returns the model's original art."""
         x0, y0, x1, y1 = box
@@ -170,14 +213,16 @@ class ComicCompositor:
         p_height = y1 - y0
         anchor = normalize_text_anchor(panel_data.get("text_anchor"))
 
-        # 1. Generate rich panel illustration with FLUX.1 (or procedural fallback)
+        # 1. Panel illustration: reuse a saved original, else FLUX (or procedural fallback)
         from server.render.flux_generator import flux_generator
-        scene_desc = panel_data.get("scene_description", "")
-        flux_img = flux_generator.generate_panel_art(
-            scene_desc, (p_width, p_height), art_style=art_style, text_anchor=anchor)
+        flux_img = reuse_art
+        if flux_img is None:
+            scene_desc = panel_data.get("scene_description", "")
+            flux_img = flux_generator.generate_panel_art(
+                scene_desc, (p_width, p_height), art_style=art_style, text_anchor=anchor)
 
         if flux_img:
-            canvas.paste(flux_img.resize((p_width, p_height), Image.Resampling.LANCZOS), (x0, y0))
+            canvas.paste(fit_cover(flux_img, (p_width, p_height)), (x0, y0))
         else:
             self._render_comic_art(draw, box, panel_data, index)
 
