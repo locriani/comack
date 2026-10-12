@@ -5,11 +5,11 @@
 import { apiJson } from './api.js';
 import { wireTokenChallenge } from './token-prompt.js';
 import { connect, onConnectionStatus } from './ws.js';
-import { initDashboard, setConnectionBadge } from './views/dashboard.js?v=friendly-1';
-import { initArchive } from './views/archive.js?v=friendly-1';
-import { initSettings } from './views/settings.js?v=friendly-1';
-import { initDevicesCard } from './views/devices.js?v=friendly-1';
-import { initOnboarding } from './views/onboarding.js?v=friendly-1';
+import { initDashboard, setConnectionBadge } from './views/dashboard.js?v=lightbox-1';
+import { initArchive } from './views/archive.js?v=lightbox-1';
+import { initSettings } from './views/settings.js?v=lightbox-1';
+import { initDevicesCard } from './views/devices.js?v=lightbox-1';
+import { initOnboarding } from './views/onboarding.js?v=lightbox-1';
 
 wireTokenChallenge();
 
