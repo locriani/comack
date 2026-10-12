@@ -708,25 +708,42 @@ async def trigger_generate():
 
 
 @app.post("/api/comics/{issue_number}/regenerate")
-async def regenerate_issue(issue_number: int):
-    """Re-render an issue's art from its saved script (same text and layout, new panels).
-    A displayed issue is redrawn on the device only when it next fetches that issue."""
+async def regenerate_issue(issue_number: int, reuse_panels: bool = True):
+    """Re-render an issue from its saved script.
+
+    When saved `panelN.png` originals exist (default), rebuilds the page from
+    those without calling FLUX — keeps aspect-ratio fixes cheap. Pass
+    `reuse_panels=false` to generate fresh panel art.
+    A displayed issue is redrawn on the device only when it next fetches that issue.
+    """
     comic = db.get_comic(issue_number)
     if not comic:
         raise HTTPException(status_code=404, detail=f"Issue #{issue_number} not found")
     script = {**json.loads(comic["script_json"]), "issue_number": issue_number,
               "series_issue": comic["series_issue"]}
+    panel_count = len(script.get("panels") or [])
+    arts = (
+        comic_compositor.load_saved_panel_arts(issue_number, panel_count)
+        if reuse_panels and panel_count
+        else None
+    )
 
     async def rerender():
         async with generation_lock:
             try:
-                await asyncio.to_thread(comic_compositor.compose_comic, script)
-                logger.info(f"Issue #{issue_number} regenerated.")
+                await asyncio.to_thread(
+                    comic_compositor.compose_comic, script, panel_arts=arts)
+                how = "reused panel originals" if arts else "new panel art"
+                logger.info(f"Issue #{issue_number} regenerated ({how}).")
             except Exception as e:
                 logger.error(f"Regenerating issue #{issue_number} failed: {e}")
 
     asyncio.create_task(rerender())
-    return {"status": "regenerating", "issue_number": issue_number}
+    return {
+        "status": "regenerating",
+        "issue_number": issue_number,
+        "reuse_panels": arts is not None,
+    }
 
 
 @app.post("/api/comics/force_reveal")

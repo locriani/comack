@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 from server.layouts import LAYOUTS, resolve_layout
-from server.render.comic_compositor import comic_compositor
+from server.render.comic_compositor import comic_compositor, fit_cover
 from server.render.flux_generator import flux_generator
 from PIL import Image, ImageDraw
 
@@ -165,6 +165,39 @@ class TestComicCompositor(unittest.TestCase):
             for f in (png_path, bin_path, png_path.with_name("issue_0994_color.png"),
                       png_path.with_name("issue_0994_color.bin"),
                       png_path.with_name("issue_0994_panel1.png")):
+                f.unlink(missing_ok=True)
+
+    def test_fit_cover_preserves_aspect_and_fills_box(self):
+        # Wide red art into a square: scale by height, center-crop sides — still red, exact size.
+        art = Image.new("RGB", (200, 100), (220, 40, 40))
+        out = fit_cover(art, (100, 100))
+        self.assertEqual(out.size, (100, 100))
+        self.assertEqual(out.getpixel((50, 50)), (220, 40, 40))
+        # Tall blue art into a wide box: scale by width, crop top/bottom.
+        tall = Image.new("RGB", (50, 200), (40, 40, 220))
+        wide = fit_cover(tall, (100, 50))
+        self.assertEqual(wide.size, (100, 50))
+        self.assertEqual(wide.getpixel((50, 25)), (40, 40, 220))
+
+    def test_compose_reuses_panel_arts_without_flux(self):
+        art = Image.new("RGB", (300, 100), (10, 200, 30))  # wide — must not be stretched into a tall box
+        script = {
+            "issue_number": 993,
+            "title": "Reuse",
+            "layout_type": "two-columns",
+            "panels": [panel(1), panel(2)],
+        }
+        with patch.object(flux_generator, "generate_panel_art") as gen:
+            png_path, bin_path = comic_compositor.compose_comic(
+                script, panel_arts=[art, art])
+        try:
+            gen.assert_not_called()
+            self.assertTrue(png_path.exists())
+        finally:
+            for f in (png_path, bin_path, png_path.with_name("issue_0993_color.png"),
+                      png_path.with_name("issue_0993_color.bin"),
+                      png_path.with_name("issue_0993_panel1.png"),
+                      png_path.with_name("issue_0993_panel2.png")):
                 f.unlink(missing_ok=True)
 
 if __name__ == "__main__":
