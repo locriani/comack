@@ -164,9 +164,12 @@ function showOriginals(issue, panelCount) {
   bindLightbox(color, () => color.src, 'Colour composite');
   $('panelList').replaceChildren(...Array.from({ length: panelCount || 0 }, (_, i) => {
     const src = `${base}/panel${i + 1}.png`;
+    // Panel 1 is usually the wide establishing shot — don't leave it half-width
+    // in the 2/4-column thumbnail grid.
+    const span = i === 0 ? ' col-span-2 sm:col-span-4' : '';
     const img = el('img', {
       src, alt: `Panel ${i + 1}, raw`, loading: 'lazy',
-      class: 'w-full h-auto rounded border border-gray-700',
+      class: `w-full h-auto rounded border border-gray-700${span}`,
     });
     img.onerror = () => img.remove();   // procedural panels have no raw art
     bindLightbox(img, src, `Panel ${i + 1}`);
