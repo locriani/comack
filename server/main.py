@@ -270,6 +270,15 @@ async def lifespan(app: FastAPI):
     # 0. Surface config drift before anything reads a setting
     warn_on_unknown_env()
 
+    # Open-by-default appliance: loud so strangers cloning for OSS don't miss it.
+    if not settings.WEB_TOKEN and settings.HOST in ("0.0.0.0", "::"):
+        logger.warning(
+            "WEB_TOKEN is unset while binding %s — every HTTP/WS surface is open "
+            "to the network. Set WEB_TOKEN (or bind 127.0.0.1) before exposing "
+            "this host beyond a trusted LAN/tailnet. See SECURITY.md.",
+            settings.HOST,
+        )
+
     # Pipelines are created per device on first use. The default device's lane
     # exists from boot, so a tokenless deployment behaves exactly as before —
     # and any comic held in stealth when the server last stopped re-enters its

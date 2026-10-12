@@ -34,6 +34,7 @@ and isn't reachable:
 
 ```sh
 git clone https://github.com/locriani/comack && cd comack
+cp .env.example .env        # required — compose will create a directory named .env if missing
 docker compose up -d --build
 # Dashboard: http://localhost:8000/
 ```
@@ -41,14 +42,17 @@ docker compose up -d --build
 The container includes the AI dependencies; first comic downloads the
 configured image model. Point the LLM at any OpenAI-compatible endpoint
 (onboarding in the UI, or the compose file) — without it the pipeline stops
-before mining and everything else still runs. Deployment details:
+before mining and everything else still runs. Defaults bind all interfaces
+with `WEB_TOKEN` empty (trusted LAN/tailnet assumption) — set a token before
+wider exposure; see [SECURITY.md](SECURITY.md). Deployment details:
 [self-hosting](docs/self-hosting.md).
 
 **No hardware (light server + desktop simulator):**
 
 ```sh
+python -m venv .venv && source .venv/bin/activate
 pip install -e .            # light core — no torch/diffusers needed
-uvicorn server.main:app --port 8000
+uvicorn server.main:app --host 127.0.0.1 --port 8000
 # second terminal:
 python simulator/reterminal_sim.py --host localhost --port 8000
 ```

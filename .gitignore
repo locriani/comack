@@ -18,5 +18,6 @@ firmware/include/secrets.h
 firmware/esp/.provision-state
 firmware/esp/.board-by-mac
 firmware/esp/sdkconfig
-data/comics/
+data/comics/*
+!data/comics/.gitkeep
 comack.service.rendered
