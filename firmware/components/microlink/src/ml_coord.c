@@ -26,6 +26,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "esp_system.h"
 #include "esp_netif.h"
 #include "cJSON.h"
 #include "lwip/sockets.h"
@@ -997,6 +998,11 @@ static int do_register(microlink_t *ml, ml_noise_state_t *noise) {
         }
     }
 
+    cJSON *reg_error = cJSON_GetObjectItem(resp_json, "Error");
+    if (cJSON_IsString(reg_error) && reg_error->valuestring[0]) {
+        ESP_LOGE(TAG, "Registration rejected: %s", reg_error->valuestring);
+    }
+
     cJSON_Delete(resp_json);
 
     int64_t t_reg_done = esp_timer_get_time();
@@ -1580,6 +1586,15 @@ static int do_fetch_peers(microlink_t *ml, ml_noise_state_t *noise) {
     if (!map_json) {
         const char *err = cJSON_GetErrorPtr();
         ESP_LOGE(TAG, "MapResponse JSON parse failed near: %.50s", err ? err : "unknown");
+        /* Our node was deleted (ephemeral nodes are, once offline) and the
+         * stored node key cannot re-register. A key generated this boot is
+         * not retried: then the auth key is at fault and a restart loops. */
+        if (ml->wg_key_from_nvs && parse_len >= 14 &&
+            memcmp(parse_start, "node not found", 14) == 0) {
+            ESP_LOGW(TAG, "Node deleted from tailnet; new node key, restarting");
+            ml_forget_node_key();
+            esp_restart();
+        }
         free(resp_buf);
         return -1;
     }

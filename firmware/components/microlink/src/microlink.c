@@ -83,6 +83,7 @@ static esp_err_t load_or_generate_keys(microlink_t *ml) {
     } else {
         key_len = 32;
         nvs_get_blob(nvs, NVS_KEY_WG_PUB, ml->wg_public_key, &key_len);
+        ml->wg_key_from_nvs = true;
     }
 
     /* DISCO key */
@@ -111,6 +112,17 @@ static esp_err_t load_or_generate_keys(microlink_t *ml) {
 
     nvs_close(nvs);
     return ESP_OK;
+}
+
+/* Drop the stored node key so the next boot registers as a new node. The
+ * control plane never revives the key of a deleted (ephemeral) node. */
+void ml_forget_node_key(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
+    nvs_erase_key(nvs, NVS_KEY_WG_PRI);
+    nvs_erase_key(nvs, NVS_KEY_WG_PUB);
+    nvs_commit(nvs);
+    nvs_close(nvs);
 }
 
 /* ============================================================================
