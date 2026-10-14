@@ -369,6 +369,7 @@ struct microlink_s {
     uint8_t machine_public_key[32];
     uint8_t wg_private_key[32];         /* WireGuard key */
     uint8_t wg_public_key[32];
+    bool wg_key_from_nvs;               /* false: generated this boot */
     uint8_t disco_private_key[32];      /* DISCO key */
     uint8_t disco_public_key[32];
 
@@ -527,6 +528,7 @@ void ml_peer_nvs_deinit(void);
 esp_err_t ml_peer_nvs_save(const ml_peer_t *peer);
 int ml_peer_nvs_load_all(ml_peer_t *peers, int max_peers);
 esp_err_t ml_peer_nvs_clear(void);
+void ml_forget_node_key(void);
 
 #ifdef CONFIG_ML_ZERO_COPY_WG
 /* ml_zerocopy.c */
